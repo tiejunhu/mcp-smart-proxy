@@ -4,6 +4,7 @@ on:
   push:
     tags:
       - "v*"
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -27,10 +28,10 @@ jobs:
             runner: ubuntu-24.04-arm
             archive_suffix: aarch64-unknown-linux-gnu
           - label: macos-x86_64
-            runner: macos-13
+            runner: macos-15-intel
             archive_suffix: x86_64-apple-darwin
           - label: macos-arm64
-            runner: macos-14
+            runner: macos-15
             archive_suffix: aarch64-apple-darwin
 
     steps:
