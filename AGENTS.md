@@ -1,3 +1,8 @@
+# First in first
+
+- Use English for all code, comments, and documentation, to ensure that it is accessible to the widest possible audience.
+- Keep all usage of this project in README.md, update it as needed, and make sure it is clear and concise.
+
 # File edit
 
 - prefer small files, with a single responsibility, and a clear API
