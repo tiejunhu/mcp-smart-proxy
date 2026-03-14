@@ -7,16 +7,16 @@ use std::process::Stdio;
 use std::sync::Arc;
 
 use rmcp::{
-    ErrorData as McpError, RoleClient, ServerHandler, ServiceExt,
     model::{
-        CallToolRequestMethod, CallToolRequestParams, CallToolResult, ListToolsResult,
-        PaginatedRequestParams, ServerCapabilities, ServerInfo, Tool, ToolAnnotations, object,
+        object, CallToolRequestMethod, CallToolRequestParams, CallToolResult, ListToolsResult,
+        PaginatedRequestParams, ServerCapabilities, ServerInfo, Tool, ToolAnnotations,
     },
     service::{ClientInitializeError, RequestContext, RunningService, ServiceError},
-    transport::{ConfigureCommandExt, TokioChildProcess, stdio},
+    transport::{stdio, ConfigureCommandExt, TokioChildProcess},
+    ErrorData as McpError, RoleClient, ServerHandler, ServiceExt,
 };
 use serde::Deserialize;
-use serde_json::{Map as JsonMap, Value as JsonValue, json};
+use serde_json::{json, Map as JsonMap, Value as JsonValue};
 use tokio::sync::Mutex;
 use toml::{Table, Value};
 
@@ -116,7 +116,7 @@ fn activate_tool_definition(toolsets: &[CachedToolsetRecord]) -> Tool {
             "properties": {
                 "name": {
                     "type": "string",
-                    "description": "The cached toolset name to activate."
+                    "description": "The toolset name to activate."
                 }
             },
             "required": ["name"],
@@ -135,13 +135,13 @@ fn activate_tool_definition(toolsets: &[CachedToolsetRecord]) -> Tool {
 fn call_tool_in_toolset_definition() -> Tool {
     Tool::new(
         CALL_TOOL_IN_TOOLSET_NAME,
-        "Call a specific tool inside a cached MCP toolset using a reused stdio connection.",
+        "Call a specific tool inside a toolset",
         object(json!({
             "type": "object",
             "properties": {
                 "toolset_name": {
                     "type": "string",
-                    "description": "The cached toolset name."
+                    "description": "The toolset name."
                 },
                 "tool_name": {
                     "type": "string",
@@ -149,7 +149,7 @@ fn call_tool_in_toolset_definition() -> Tool {
                 },
                 "args_in_json": {
                     "type": "string",
-                    "description": "A JSON object string containing the downstream tool arguments, for example {}."
+                    "description": "A JSON object string containing the downstream tool arguments, follow the JSON schema, for example {}."
                 }
             },
             "required": ["toolset_name", "tool_name", "args_in_json"],
