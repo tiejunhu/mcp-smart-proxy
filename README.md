@@ -92,6 +92,20 @@ Pushing a tag that starts with `v` publishes release binaries automatically on G
 
 Before using the release workflow, add a repository secret named `HOMEBREW_TAP_GITHUB_TOKEN` with permission to push to `tiejunhu/homebrew-mcp-smart-proxy`.
 
+You can prepare a release tag with:
+
+```bash
+./publish.sh
+```
+
+This reads `version` from `Cargo.toml`, increments only the last numeric component, commits the change as `release <new version>`, creates `v<new version>`, and pushes that tag.
+
+To set an explicit version instead of incrementing automatically:
+
+```bash
+./publish.sh 0.0.6
+```
+
 Example:
 
 ```bash
