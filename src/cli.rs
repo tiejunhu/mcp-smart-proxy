@@ -5,7 +5,12 @@ use clap::{Parser, Subcommand, ValueEnum};
 pub const DEFAULT_CONFIG_PATH: &str = "~/.config/mcp-smart-proxy/config.toml";
 
 #[derive(Debug, Parser)]
-#[command(version, about = "A smart MCP proxy")]
+#[command(
+    version,
+    about = "A smart MCP proxy",
+    arg_required_else_help = true,
+    subcommand_required = true
+)]
 pub struct Cli {
     /// Override the config file path.
     #[arg(long, value_name = "PATH", default_value = DEFAULT_CONFIG_PATH)]
@@ -48,6 +53,7 @@ pub enum ImportSource {
 #[derive(Debug, Subcommand)]
 pub enum ConfigCommand {
     /// Update OpenAI settings.
+    #[command(arg_required_else_help = true)]
     Openai {
         #[arg(long)]
         baseurl: Option<String>,
@@ -59,6 +65,7 @@ pub enum ConfigCommand {
         make_default: bool,
     },
     /// Update Codex settings.
+    #[command(arg_required_else_help = true)]
     Codex {
         #[arg(long)]
         model: Option<String>,
@@ -70,6 +77,7 @@ pub enum ConfigCommand {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use clap::error::ErrorKind;
 
     #[test]
     fn parses_reload_without_name() {
@@ -89,5 +97,35 @@ mod tests {
             Some(Command::Reload { name }) => assert_eq!(name.as_deref(), Some("github")),
             other => panic!("expected reload command, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn config_openai_without_flags_shows_help() {
+        let error = Cli::try_parse_from(["msp", "config", "openai"]).unwrap_err();
+
+        assert_eq!(
+            error.kind(),
+            ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand
+        );
+    }
+
+    #[test]
+    fn config_codex_without_flags_shows_help() {
+        let error = Cli::try_parse_from(["msp", "config", "codex"]).unwrap_err();
+
+        assert_eq!(
+            error.kind(),
+            ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand
+        );
+    }
+
+    #[test]
+    fn top_level_without_subcommand_shows_help() {
+        let error = Cli::try_parse_from(["msp"]).unwrap_err();
+
+        assert_eq!(
+            error.kind(),
+            ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand
+        );
     }
 }

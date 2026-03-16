@@ -964,6 +964,7 @@ name = "mcp-smart-proxy"
 version = "0.0.10"
 dependencies = [
  "aisdk",
+ "chrono",
  "clap",
  "rmcp",
  "serde",

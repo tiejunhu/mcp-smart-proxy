@@ -7,7 +7,7 @@ use toml::{Table, Value};
 
 use crate::paths::{cache_file_path, expand_tilde, sanitize_name};
 use crate::types::{
-    CodexRuntimeConfig, ConfiguredServer, ModelProviderConfig, OpenAiRuntimeConfig,
+    CachedTools, CodexRuntimeConfig, ConfiguredServer, ModelProviderConfig, OpenAiRuntimeConfig,
 };
 
 const DEFAULT_OPENAI_MODEL: &str = "gpt-5.2";
@@ -52,6 +52,7 @@ pub struct ListedServer {
     pub name: String,
     pub command: String,
     pub args: Vec<String>,
+    pub last_updated_at: Option<u128>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -154,13 +155,23 @@ pub fn list_servers(config_path: &Path) -> Result<Vec<ListedServer>, Box<dyn Err
                 .transpose()?
                 .unwrap_or_default();
 
+            let last_updated_at = read_cached_tools_timestamp(&name);
+
             Ok(ListedServer {
                 name,
                 command,
                 args,
+                last_updated_at,
             })
         })
         .collect()
+}
+
+fn read_cached_tools_timestamp(server_name: &str) -> Option<u128> {
+    let cache_path = cache_file_path(server_name).ok()?;
+    let contents = fs::read_to_string(cache_path).ok()?;
+    let cached: CachedTools = serde_json::from_str(&contents).ok()?;
+    Some(cached.fetched_at_epoch_ms)
 }
 
 pub fn remove_server(
@@ -931,6 +942,9 @@ mod tests {
     #[test]
     fn lists_configured_servers_sorted_by_name() {
         let config_path = unique_test_path("list-servers.toml");
+        let cache_home = unique_test_path("list-servers-home");
+
+        fs::create_dir_all(&cache_home).unwrap();
         fs::write(
             &config_path,
             r#"
@@ -947,7 +961,7 @@ mod tests {
         )
         .unwrap();
 
-        let servers = list_servers(&config_path).unwrap();
+        let servers = with_home_env(&cache_home, || list_servers(&config_path).unwrap());
 
         assert_eq!(
             servers,
@@ -959,16 +973,58 @@ mod tests {
                         "-y".to_string(),
                         "@modelcontextprotocol/server-github".to_string(),
                     ],
+                    last_updated_at: None,
                 },
                 ListedServer {
                     name: "beta".to_string(),
                     command: "uvx".to_string(),
                     args: vec!["beta-server".to_string()],
+                    last_updated_at: None,
                 },
             ]
         );
 
         fs::remove_file(config_path).unwrap();
+        fs::remove_dir_all(cache_home).unwrap();
+    }
+
+    #[test]
+    fn lists_cached_reload_timestamp_when_cache_exists() {
+        let config_path = unique_test_path("list-servers-with-cache.toml");
+        let cache_home = unique_test_path("list-servers-with-cache-home");
+
+        fs::create_dir_all(cache_home.join(".cache/mcp-smart-proxy")).unwrap();
+        fs::write(
+            &config_path,
+            r#"
+                [servers.alpha]
+                transport = "stdio"
+                command = "npx"
+                args = ["-y", "@modelcontextprotocol/server-github"]
+            "#,
+        )
+        .unwrap();
+
+        let cache_path = cache_file_path_from_home(&cache_home, "alpha").unwrap();
+        fs::write(
+            &cache_path,
+            serde_json::to_string(&CachedTools {
+                server: "alpha".to_string(),
+                summary: "summary".to_string(),
+                fetched_at_epoch_ms: 1_742_103_456_000,
+                tools: Vec::new(),
+            })
+            .unwrap(),
+        )
+        .unwrap();
+
+        let servers = with_home_env(&cache_home, || list_servers(&config_path).unwrap());
+
+        assert_eq!(servers.len(), 1);
+        assert_eq!(servers[0].last_updated_at, Some(1_742_103_456_000));
+
+        fs::remove_file(config_path).unwrap();
+        fs::remove_dir_all(cache_home).unwrap();
     }
 
     #[test]

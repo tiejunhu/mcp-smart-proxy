@@ -1,5 +1,6 @@
 use std::error::Error;
 
+use chrono::{Local, TimeZone};
 use clap::Parser;
 
 mod cli;
@@ -74,26 +75,26 @@ async fn run() -> Result<(), Box<dyn Error>> {
                 )
             })?;
 
-            let message = if servers.is_empty() {
-                format!("Configured 0 MCP server(s) in {}", config_path.display())
-            } else {
-                let count = servers.len();
-                let rendered = servers
-                    .into_iter()
-                    .map(|server| {
-                        let command_line = describe_command(&server.command, &server.args);
-                        format!("{} -> {}", server.name, command_line)
-                    })
-                    .collect::<Vec<_>>()
-                    .join("; ");
-
+            print_app_event(
+                "cli.list",
                 format!(
-                    "Configured {count} MCP server(s) in {}: {rendered}",
+                    "Configured {} MCP server(s) in {}",
+                    servers.len(),
                     config_path.display()
-                )
-            };
+                ),
+            );
 
-            print_app_event("cli.list", message);
+            for server in servers {
+                let command_line = describe_command(&server.command, &server.args);
+                let last_updated = format_last_updated(server.last_updated_at);
+                print_app_event(
+                    "cli.list.server",
+                    format!(
+                        "{} -> {} | last_updated: {}",
+                        server.name, command_line, last_updated
+                    ),
+                );
+            }
         }
         Some(Command::Import {
             source: ImportSource::Codex,
@@ -398,4 +399,38 @@ async fn run() -> Result<(), Box<dyn Error>> {
     }
 
     Ok(())
+}
+
+fn format_last_updated(epoch_ms: Option<u128>) -> String {
+    epoch_ms
+        .and_then(format_local_timestamp)
+        .unwrap_or_else(|| "never".to_string())
+}
+
+fn format_local_timestamp(epoch_ms: u128) -> Option<String> {
+    let epoch_ms = i64::try_from(epoch_ms).ok()?;
+    let datetime = Local.timestamp_millis_opt(epoch_ms).single()?;
+    Some(datetime.format("%Y-%m-%d %H:%M:%S").to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn formats_missing_last_updated_as_never() {
+        assert_eq!(format_last_updated(None), "never");
+    }
+
+    #[test]
+    fn formats_last_updated_with_requested_shape() {
+        let rendered = format_local_timestamp(1_742_103_456_000).unwrap();
+
+        assert_eq!(rendered.len(), 19);
+        assert_eq!(rendered.chars().nth(4), Some('-'));
+        assert_eq!(rendered.chars().nth(7), Some('-'));
+        assert_eq!(rendered.chars().nth(10), Some(' '));
+        assert_eq!(rendered.chars().nth(13), Some(':'));
+        assert_eq!(rendered.chars().nth(16), Some(':'));
+    }
 }

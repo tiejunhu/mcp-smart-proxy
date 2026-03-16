@@ -3,6 +3,7 @@
 `mcp-smart-proxy` is a small Rust CLI that helps an AI work with multiple stdio MCP servers through one proxy server.
 
 The installed binary name is `msp`.
+Running `msp` without any arguments prints the top-level command help.
 
 It does two things:
 
@@ -223,6 +224,15 @@ msp list
 ```
 
 This command reads the configured stdio MCP servers from the config file and prints each normalized server name with its configured command line.
+Each configured server is emitted on its own application output line and includes the last successful cache refresh time in `YYYY-MM-DD HH:MM:SS` format.
+
+Example:
+
+```text
+[app][info][cli.list] Configured 2 MCP server(s) in /Users/example/.config/mcp-smart-proxy/config.toml
+[app][info][cli.list.server] github -> npx -y @modelcontextprotocol/server-github | last_updated: 2026-03-16 10:30:45
+[app][info][cli.list.server] slack -> uvx slack-mcp | last_updated: never
+```
 
 ### Remove a server
 
@@ -242,6 +252,8 @@ This command:
 msp config openai --key "$OPENAI_API_KEY" --model gpt-5.2
 ```
 
+Running `msp config openai` without any flags prints the command help instead of writing an empty update.
+
 Optional fields:
 
 ```bash
@@ -256,6 +268,8 @@ msp config openai --default
 ```bash
 msp config codex --model gpt-5.2
 ```
+
+Running `msp config codex` without any flags prints the command help instead of writing an empty update.
 
 Optional fields:
 
