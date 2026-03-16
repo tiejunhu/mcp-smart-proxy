@@ -318,9 +318,9 @@ The cache is stored at:
 msp mcp
 ```
 
-The server runs over stdio and loads every configured server that already has a cache file.
+Before exposing the proxy stdio MCP server upstream, this command automatically reloads every configured MCP server.
 
-If a configured server has no cache yet, it is ignored until `reload` is run for that server.
+Only after that reload phase succeeds does the proxy start over stdio and load the refreshed cached toolsets. If any server fails to reload, the proxy does not report ready upstream.
 
 ## Typical Workflow
 

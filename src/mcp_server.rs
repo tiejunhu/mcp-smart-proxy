@@ -20,12 +20,13 @@ use serde_json::{Map as JsonMap, Value as JsonValue, json};
 use tokio::sync::Mutex;
 use toml::{Table, Value};
 
-use crate::config::{configured_server, load_config_table};
+use crate::config::{configured_server, list_servers, load_config_table};
 use crate::console::{
     ExternalOutputRouter, describe_command, operation_error, print_external_command_failure,
     print_external_output_if_present, spawn_stderr_collector,
 };
 use crate::paths::{cache_file_path_from_home, home_dir, sanitize_name};
+use crate::reload::reload_server;
 use crate::types::{CachedTools, ConfiguredServer, ToolSnapshot};
 
 const ACTIVATE_EXTERNAL_MCP_NAME: &str = "activate_external_mcp";
@@ -60,6 +61,17 @@ struct CallToolInExternalMcpRequest {
 }
 
 pub async fn serve_cached_toolsets(config_path: &Path) -> Result<(), Box<dyn Error>> {
+    reload_all_toolsets(config_path).await.map_err(|error| {
+        operation_error(
+            "mcp.reload_all_toolsets",
+            format!(
+                "failed to reload configured MCP servers before starting proxy with config {}",
+                config_path.display()
+            ),
+            error,
+        )
+    })?;
+
     let config = load_config_table(config_path).map_err(|error| {
         operation_error(
             "mcp.load_config",
@@ -91,6 +103,34 @@ pub async fn serve_cached_toolsets(config_path: &Path) -> Result<(), Box<dyn Err
             Box::new(error),
         )
     })?;
+    Ok(())
+}
+
+async fn reload_all_toolsets(config_path: &Path) -> Result<(), Box<dyn Error>> {
+    let servers = list_servers(config_path).map_err(|error| {
+        operation_error(
+            "mcp.reload_all_toolsets.list_servers",
+            format!(
+                "failed to list configured MCP servers from {} before startup reload",
+                config_path.display()
+            ),
+            error,
+        )
+    })?;
+
+    for server in servers {
+        let server_name = server.name;
+        reload_server(config_path, &server_name)
+            .await
+            .map_err(|error| {
+                operation_error(
+                    "mcp.reload_all_toolsets.reload_server",
+                    format!("failed to reload MCP server `{server_name}` before proxy startup"),
+                    error,
+                )
+            })?;
+    }
+
     Ok(())
 }
 
