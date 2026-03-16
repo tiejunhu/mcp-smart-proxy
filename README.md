@@ -178,6 +178,25 @@ Example:
 msp add remote-demo https://example.com/mcp
 ```
 
+### Import servers from Codex
+
+```bash
+msp import codex
+```
+
+This command:
+
+1. checks that a supported `default_provider` is already configured
+2. reads Codex MCP servers from `$CODEX_HOME/config.toml` or `~/.codex/config.toml`
+3. imports each server as if you ran `msp add <name> <command...>` for it
+4. reloads every imported server immediately
+
+`import codex` fails before making changes if `default_provider` is missing.
+
+If a Codex server name already exists in the `msp` config after normalization, that server is skipped.
+
+Only Codex MCP servers defined with `command` and optional string `args` are importable. Entries that rely on other settings such as `env`, `cwd`, or non-stdio transports are rejected instead of being imported partially.
+
 ### Configure OpenAI settings
 
 ```bash
@@ -244,18 +263,24 @@ If a configured server has no cache yet, it is ignored until `reload` is run for
 ## Typical Workflow
 
 ```bash
-msp add github npx -y @modelcontextprotocol/server-github
 msp config openai --key "$OPENAI_API_KEY" --default
-msp reload github
+msp add github npx -y @modelcontextprotocol/server-github
 msp mcp
 ```
 
 Using Codex:
 
 ```bash
-msp add github npx -y @modelcontextprotocol/server-github
 msp config codex --default
-msp reload github
+msp add github npx -y @modelcontextprotocol/server-github
+msp mcp
+```
+
+Importing existing Codex MCP servers:
+
+```bash
+msp config codex --default
+msp import codex
 msp mcp
 ```
 

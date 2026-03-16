@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 
 pub const DEFAULT_CONFIG_PATH: &str = "~/.config/mcp-smart-proxy/config.toml";
 
@@ -23,6 +23,8 @@ pub enum Command {
         #[arg(required = true, num_args = 1.., trailing_var_arg = true, allow_hyphen_values = true)]
         command: Vec<String>,
     },
+    /// Import MCP servers from another tool's config and refresh their cached tools.
+    Import { source: ImportSource },
     /// Refresh cached tool metadata for a configured MCP server.
     Reload { name: String },
     /// Start a stdio MCP server that exposes cached toolset activation.
@@ -32,6 +34,11 @@ pub enum Command {
         #[command(subcommand)]
         command: ConfigCommand,
     },
+}
+
+#[derive(Debug, Clone, ValueEnum)]
+pub enum ImportSource {
+    Codex,
 }
 
 #[derive(Debug, Subcommand)]

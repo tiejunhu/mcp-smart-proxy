@@ -1,16 +1,18 @@
 use std::env;
 use std::error::Error;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use toml::{Table, Value};
 
-use crate::paths::sanitize_name;
+use crate::paths::{expand_tilde, sanitize_name};
 use crate::types::{
     CodexRuntimeConfig, ConfiguredServer, ModelProviderConfig, OpenAiRuntimeConfig,
 };
 
 const DEFAULT_OPENAI_MODEL: &str = "gpt-5.2";
+const DEFAULT_CODEX_CONFIG_PATH: &str = "~/.codex/config.toml";
+const CODEX_HOME_ENV: &str = "CODEX_HOME";
 const DEFAULT_PROVIDER_KEY: &str = "default_provider";
 const CODEX_PROVIDER_NAME: &str = "codex";
 const OPENAI_API_BASE_ENV: &str = "OPENAI_API_BASE";
@@ -35,6 +37,12 @@ impl StdioServer {
             args: parts.collect(),
         })
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ImportableServer {
+    pub name: String,
+    pub command: Vec<String>,
 }
 
 pub struct OpenAiConfigUpdate {
@@ -203,6 +211,12 @@ pub fn update_codex_config(
     Ok(())
 }
 
+pub fn load_codex_servers_for_import() -> Result<(PathBuf, Vec<ImportableServer>), Box<dyn Error>> {
+    let path = codex_config_path()?;
+    let servers = load_codex_servers_for_import_from_path(&path)?;
+    Ok((path, servers))
+}
+
 pub fn load_openai_runtime_config(config: &Table) -> Result<OpenAiRuntimeConfig, Box<dyn Error>> {
     let table = config.get("openai").and_then(Value::as_table);
 
@@ -247,6 +261,15 @@ pub fn load_default_model_provider_config(
     }
 }
 
+pub fn contains_server_name(config: &Table, requested_name: &str) -> bool {
+    let normalized = sanitize_name(requested_name);
+    if normalized.is_empty() {
+        return false;
+    }
+
+    has_server_name(config, &normalized)
+}
+
 fn normalize_add_command(raw_command: Vec<String>) -> Vec<String> {
     if raw_command.len() == 1 && looks_like_url(&raw_command[0]) {
         return vec![
@@ -258,6 +281,80 @@ fn normalize_add_command(raw_command: Vec<String>) -> Vec<String> {
     }
 
     raw_command
+}
+
+fn codex_config_path() -> Result<PathBuf, Box<dyn Error>> {
+    if let Some(codex_home) = env::var_os(CODEX_HOME_ENV).filter(|value| !value.is_empty()) {
+        return Ok(PathBuf::from(codex_home).join("config.toml"));
+    }
+
+    expand_tilde(Path::new(DEFAULT_CODEX_CONFIG_PATH))
+}
+
+fn load_codex_servers_for_import_from_path(
+    path: &Path,
+) -> Result<Vec<ImportableServer>, Box<dyn Error>> {
+    if !path.exists() {
+        return Err(format!("Codex config not found at {}", path.display()).into());
+    }
+
+    let config = load_config_table(path)?;
+    let servers = config
+        .get("mcp_servers")
+        .and_then(Value::as_table)
+        .ok_or_else(|| {
+            format!(
+                "no `mcp_servers` table found in Codex config {}",
+                path.display()
+            )
+        })?;
+
+    if servers.is_empty() {
+        return Err(format!("no MCP servers found in Codex config {}", path.display()).into());
+    }
+
+    let mut names = servers.keys().cloned().collect::<Vec<_>>();
+    names.sort();
+
+    names
+        .into_iter()
+        .map(|name| {
+            let server = servers[&name]
+                .as_table()
+                .ok_or_else(|| format!("Codex MCP server `{name}` must be a table"))?;
+            validate_importable_codex_server(&name, server)?;
+
+            let command = server
+                .get("command")
+                .and_then(Value::as_str)
+                .ok_or_else(|| format!("Codex MCP server `{name}` is missing `command`"))?
+                .to_string();
+            let args = match server.get("args") {
+                None => Vec::new(),
+                Some(Value::Array(items)) => items
+                    .iter()
+                    .map(|value| {
+                        value.as_str().map(ToOwned::to_owned).ok_or_else(|| {
+                            format!("Codex MCP server `{name}` contains a non-string arg")
+                        })
+                    })
+                    .collect::<Result<Vec<_>, _>>()?,
+                Some(_) => {
+                    return Err(
+                        format!("Codex MCP server `{name}` has a non-array `args` field").into(),
+                    );
+                }
+            };
+
+            let mut raw_command = vec![command];
+            raw_command.extend(args);
+
+            Ok(ImportableServer {
+                name,
+                command: raw_command,
+            })
+        })
+        .collect()
 }
 
 fn insert_server(
@@ -296,6 +393,24 @@ fn set_optional_string(table: &mut Table, key: &str, value: Option<String>) {
     if let Some(value) = value {
         table.insert(key.to_string(), Value::String(value));
     }
+}
+
+fn validate_importable_codex_server(name: &str, server: &Table) -> Result<(), Box<dyn Error>> {
+    let unsupported_keys = server
+        .keys()
+        .filter(|key| !matches!(key.as_str(), "command" | "args"))
+        .map(|key| format!("`{key}`"))
+        .collect::<Vec<_>>();
+
+    if unsupported_keys.is_empty() {
+        return Ok(());
+    }
+
+    Err(format!(
+        "Codex MCP server `{name}` uses unsupported settings {}; only `command` and `args` can be imported",
+        unsupported_keys.join(", ")
+    )
+    .into())
 }
 
 fn looks_like_url(value: &str) -> bool {
@@ -427,6 +542,132 @@ mod tests {
     }
 
     #[test]
+    fn resolves_codex_config_path_from_codex_home() {
+        let _guard = env_lock().lock().unwrap();
+        let previous_codex_home = env::var(CODEX_HOME_ENV).ok();
+
+        unsafe {
+            env::set_var(CODEX_HOME_ENV, "/tmp/codex-home");
+        }
+
+        let path = codex_config_path().unwrap();
+
+        assert_eq!(path, PathBuf::from("/tmp/codex-home/config.toml"));
+
+        match previous_codex_home {
+            Some(value) => unsafe { env::set_var(CODEX_HOME_ENV, value) },
+            None => unsafe { env::remove_var(CODEX_HOME_ENV) },
+        }
+    }
+
+    #[test]
+    fn loads_codex_servers_for_import_from_path() {
+        let config_path = unique_test_path("codex-import.toml");
+        fs::write(
+            &config_path,
+            r#"
+                [mcp_servers.beta]
+                command = "uvx"
+                args = ["beta-server"]
+
+                [mcp_servers.alpha]
+                command = "npx"
+                args = ["-y", "@modelcontextprotocol/server-github"]
+            "#,
+        )
+        .unwrap();
+
+        let servers = load_codex_servers_for_import_from_path(&config_path).unwrap();
+
+        assert_eq!(
+            servers,
+            vec![
+                ImportableServer {
+                    name: "alpha".to_string(),
+                    command: vec![
+                        "npx".to_string(),
+                        "-y".to_string(),
+                        "@modelcontextprotocol/server-github".to_string(),
+                    ],
+                },
+                ImportableServer {
+                    name: "beta".to_string(),
+                    command: vec!["uvx".to_string(), "beta-server".to_string()],
+                },
+            ]
+        );
+
+        fs::remove_file(config_path).unwrap();
+    }
+
+    #[test]
+    fn rejects_codex_import_when_server_uses_unsupported_fields() {
+        let config_path = unique_test_path("codex-import-unsupported.toml");
+        fs::write(
+            &config_path,
+            r#"
+                [mcp_servers.demo]
+                command = "npx"
+                args = ["-y", "demo-server"]
+
+                [mcp_servers.demo.env]
+                DEMO_TOKEN = "secret"
+            "#,
+        )
+        .unwrap();
+
+        let error = load_codex_servers_for_import_from_path(&config_path).unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            "Codex MCP server `demo` uses unsupported settings `env`; only `command` and `args` can be imported"
+        );
+
+        fs::remove_file(config_path).unwrap();
+    }
+
+    #[test]
+    fn rejects_codex_import_when_args_is_not_an_array() {
+        let config_path = unique_test_path("codex-import-invalid-args.toml");
+        fs::write(
+            &config_path,
+            r#"
+                [mcp_servers.demo]
+                command = "npx"
+                args = "demo-server"
+            "#,
+        )
+        .unwrap();
+
+        let error = load_codex_servers_for_import_from_path(&config_path).unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            "Codex MCP server `demo` has a non-array `args` field"
+        );
+
+        fs::remove_file(config_path).unwrap();
+    }
+
+    #[test]
+    fn rejects_codex_import_when_no_servers_are_configured() {
+        let config_path = unique_test_path("codex-import-empty.toml");
+        fs::write(&config_path, "").unwrap();
+
+        let error = load_codex_servers_for_import_from_path(&config_path).unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            format!(
+                "no `mcp_servers` table found in Codex config {}",
+                config_path.display()
+            )
+        );
+
+        fs::remove_file(config_path).unwrap();
+    }
+
+    #[test]
     fn writes_stdio_server_to_config() {
         let config_path = unique_test_path("write-server-config.toml");
         update_codex_config(
@@ -458,6 +699,22 @@ mod tests {
         );
 
         fs::remove_file(config_path).unwrap();
+    }
+
+    #[test]
+    fn detects_existing_server_name_after_normalization() {
+        let config: Table = toml::from_str(
+            r#"
+                [servers.github-tools]
+                transport = "stdio"
+                command = "npx"
+                args = ["-y", "@modelcontextprotocol/server-github"]
+            "#,
+        )
+        .unwrap();
+
+        assert!(contains_server_name(&config, "GitHub Tools"));
+        assert!(!contains_server_name(&config, "filesystem"));
     }
 
     #[test]

@@ -10,10 +10,11 @@ mod paths;
 mod reload;
 mod types;
 
-use cli::{Cli, Command, ConfigCommand};
+use cli::{Cli, Command, ConfigCommand, ImportSource};
 use config::{
-    CodexConfigUpdate, OpenAiConfigUpdate, add_server, load_config_table, update_codex_config,
-    update_openai_config,
+    CodexConfigUpdate, OpenAiConfigUpdate, add_server, contains_server_name,
+    load_codex_servers_for_import, load_config_table, load_default_model_provider_config,
+    update_codex_config, update_openai_config,
 };
 use console::{operation_error, print_app_error, print_app_event};
 use paths::expand_tilde;
@@ -60,6 +61,102 @@ async fn run() -> Result<(), Box<dyn Error>> {
                     "Added stdio MCP server `{server_name}` to {} and reloaded cached tools into {}",
                     config_path.display(),
                     cache_path.display()
+                ),
+            );
+        }
+        Some(Command::Import {
+            source: ImportSource::Codex,
+        }) => {
+            let mut config = load_config_table(&config_path).map_err(|error| {
+                operation_error(
+                    "cli.import.codex.validate_provider.load_config",
+                    format!("failed to load config from {}", config_path.display()),
+                    error,
+                )
+            })?;
+            let _ = load_default_model_provider_config(&config).map_err(|error| {
+                operation_error(
+                    "cli.import.codex.validate_provider",
+                    format!(
+                        "failed to validate model provider before importing from Codex into {}",
+                        config_path.display()
+                    ),
+                    error,
+                )
+            })?;
+            let (codex_config_path, servers) =
+                load_codex_servers_for_import().map_err(|error| {
+                    operation_error(
+                        "cli.import.codex.load_source",
+                        "failed to load importable MCP servers from Codex config",
+                        error,
+                    )
+                })?;
+
+            let mut imported_servers = Vec::new();
+            let mut skipped_servers = Vec::new();
+            for server in servers {
+                if contains_server_name(&config, &server.name) {
+                    skipped_servers.push(server.name);
+                    continue;
+                }
+
+                let server_name =
+                    add_server(&config_path, &server.name, server.command).map_err(|error| {
+                        operation_error(
+                            "cli.import.codex.add",
+                            format!(
+                                "failed to import MCP server `{}` from {} into {}",
+                                server.name,
+                                codex_config_path.display(),
+                                config_path.display()
+                            ),
+                            error,
+                        )
+                    })?;
+                let cache_path =
+                    reload_server(&config_path, &server_name)
+                        .await
+                        .map_err(|error| {
+                            operation_error(
+                                "cli.import.codex.reload",
+                                format!(
+                                    "failed to reload imported MCP server `{server_name}` from {}",
+                                    codex_config_path.display()
+                                ),
+                                error,
+                            )
+                        })?;
+                imported_servers.push(format!("{server_name} -> {}", cache_path.display()));
+                config = load_config_table(&config_path).map_err(|error| {
+                    operation_error(
+                        "cli.import.codex.refresh_config",
+                        format!("failed to refresh config from {}", config_path.display()),
+                        error,
+                    )
+                })?;
+            }
+
+            print_app_event(
+                "cli.import.codex",
+                format!(
+                    "Imported {} MCP server(s) from {} into {}{}{}",
+                    imported_servers.len(),
+                    codex_config_path.display(),
+                    config_path.display(),
+                    if imported_servers.is_empty() {
+                        "".to_string()
+                    } else {
+                        format!(": {}", imported_servers.join(", "))
+                    },
+                    if skipped_servers.is_empty() {
+                        "".to_string()
+                    } else {
+                        format!(
+                            "; skipped existing server(s): {}",
+                            skipped_servers.join(", ")
+                        )
+                    }
                 ),
             );
         }
