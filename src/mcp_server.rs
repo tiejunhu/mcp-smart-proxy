@@ -21,6 +21,9 @@ use tokio::sync::Mutex;
 use toml::{Table, Value};
 
 use crate::config::{configured_server, load_config_table};
+use crate::console::{
+    describe_command, operation_error, print_external_command_start, spawn_stderr_logger,
+};
 use crate::paths::{cache_file_path_from_home, home_dir, sanitize_name};
 use crate::types::{CachedTools, ConfiguredServer, ToolSnapshot};
 
@@ -48,10 +51,37 @@ struct CallToolInToolsetRequest {
 }
 
 pub async fn serve_cached_toolsets(config_path: &Path) -> Result<(), Box<dyn Error>> {
-    let config = load_config_table(config_path)?;
-    let toolsets = load_cached_toolsets(&config)?;
-    let service = SmartProxyMcpServer::new(toolsets).serve(stdio()).await?;
-    service.waiting().await?;
+    let config = load_config_table(config_path).map_err(|error| {
+        operation_error(
+            "mcp.load_config",
+            format!("failed to load config from {}", config_path.display()),
+            error,
+        )
+    })?;
+    let toolsets = load_cached_toolsets(&config).map_err(|error| {
+        operation_error(
+            "mcp.load_toolsets",
+            "failed to load cached toolsets from config",
+            error,
+        )
+    })?;
+    let service = SmartProxyMcpServer::new(toolsets)
+        .serve(stdio())
+        .await
+        .map_err(|error| {
+            operation_error(
+                "mcp.serve",
+                "failed to start the proxy stdio MCP server",
+                Box::new(error),
+            )
+        })?;
+    service.waiting().await.map_err(|error| {
+        operation_error(
+            "mcp.wait",
+            "proxy stdio MCP server exited with an error",
+            Box::new(error),
+        )
+    })?;
     Ok(())
 }
 
@@ -221,15 +251,25 @@ fn map_client_initialize_error(error: ClientInitializeError) -> McpError {
 async fn connect_toolset_client(
     server: &ConfiguredServer,
 ) -> Result<Arc<RunningService<RoleClient, ()>>, McpError> {
-    let transport = TokioChildProcess::builder(
+    let command_line = describe_command(&server.command, &server.args);
+    print_external_command_start("mcp.connect_toolset_client", &server.command, &command_line);
+    let (transport, stderr) = TokioChildProcess::builder(
         tokio::process::Command::new(&server.command).configure(|cmd| {
             cmd.args(&server.args);
         }),
     )
-    .stderr(Stdio::inherit())
+    .stderr(Stdio::piped())
     .spawn()
-    .map_err(|error| McpError::internal_error(error.to_string(), None))?
-    .0;
+    .map_err(|error| McpError::internal_error(error.to_string(), None))?;
+
+    if let Some(stderr) = stderr {
+        spawn_stderr_logger(
+            "mcp.connect_toolset_client".to_string(),
+            server.command.clone(),
+            command_line,
+            stderr,
+        );
+    }
 
     let client = ().serve(transport).await.map_err(map_client_initialize_error)?;
 

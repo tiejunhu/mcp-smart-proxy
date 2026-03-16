@@ -51,6 +51,41 @@ Run the CLI during development with:
 cargo run -- --help
 ```
 
+## Console Output
+
+`msp` writes structured console output so another AI or operator can distinguish application events from external command output.
+
+- Application success output uses `=== MSP APP EVENT BEGIN ===` and `=== MSP APP EVENT END ===`.
+- Application failure output uses `=== MSP APP ERROR BEGIN ===` and `=== MSP APP ERROR END ===`.
+- External command stderr is tagged with `[MSP][EXTERNAL][<stage>][<label>]...`.
+- External command blocks include the stage, command line, stream, and raw content.
+
+Example success output:
+
+```text
+=== MSP APP EVENT BEGIN ===
+kind: app
+level: info
+stage: cli.reload
+message: Reloaded MCP server `github` into /Users/example/.cache/mcp-smart-proxy/github.json
+=== MSP APP EVENT END ===
+```
+
+Example failure output:
+
+```text
+=== MSP APP ERROR BEGIN ===
+kind: app
+level: error
+stage: reload.fetch_tools.list_tools
+summary: failed to list tools from external command `npx -y @modelcontextprotocol/server-github`
+error_chain:
+- cli.reload: failed to reload MCP server `github`
+- reload.fetch_tools: failed to fetch tools from MCP server `github`
+- reload.fetch_tools.list_tools: failed to list tools from external command `npx -y @modelcontextprotocol/server-github`
+=== MSP APP ERROR END ===
+```
+
 ## Release Binaries
 
 Pushing a tag that starts with `v` publishes release binaries automatically on GitHub Releases and updates `Formula/msp.rb` for Homebrew.

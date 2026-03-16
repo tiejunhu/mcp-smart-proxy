@@ -15,3 +15,11 @@
 - serde, for serialization and deserialization of messages
 - tokio, for async runtime
 - aisdk, for ai/llm calling
+
+# Console output
+
+- Console output must clearly separate application output from external command output.
+- Application success or failure output must use explicit begin/end markers and include a stage field.
+- External command output must include the stage, the command line, the stream (`stdout` or `stderr`), and clear start/end or block markers.
+- Error output must explain which stage failed and preserve enough original external output that another AI model can diagnose the failing step from the console transcript alone.
+- When changing console behavior, update README.md examples or usage notes in the same change.
