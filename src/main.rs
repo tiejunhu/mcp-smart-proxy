@@ -84,7 +84,7 @@ async fn run() -> Result<(), Box<dyn Error>> {
                     error,
                 )
             })?;
-            let (codex_config_path, servers) =
+            let (codex_config_path, import_plan) =
                 load_codex_servers_for_import().map_err(|error| {
                     operation_error(
                         "cli.import.codex.load_source",
@@ -94,10 +94,10 @@ async fn run() -> Result<(), Box<dyn Error>> {
                 })?;
 
             let mut imported_servers = Vec::new();
-            let mut skipped_servers = Vec::new();
-            for server in servers {
+            let mut skipped_existing_servers = Vec::new();
+            for server in import_plan.servers {
                 if contains_server_name(&config, &server.name) {
-                    skipped_servers.push(server.name);
+                    skipped_existing_servers.push(server.name);
                     continue;
                 }
 
@@ -149,13 +149,26 @@ async fn run() -> Result<(), Box<dyn Error>> {
                     } else {
                         format!(": {}", imported_servers.join(", "))
                     },
-                    if skipped_servers.is_empty() {
+                    if skipped_existing_servers.is_empty()
+                        && import_plan.skipped_self_servers.is_empty()
+                    {
                         "".to_string()
                     } else {
-                        format!(
-                            "; skipped existing server(s): {}",
-                            skipped_servers.join(", ")
-                        )
+                        let mut skipped_parts = Vec::new();
+                        if !skipped_existing_servers.is_empty() {
+                            skipped_parts.push(format!(
+                                "existing server(s): {}",
+                                skipped_existing_servers.join(", ")
+                            ));
+                        }
+                        if !import_plan.skipped_self_servers.is_empty() {
+                            skipped_parts.push(format!(
+                                "self-referential server(s): {}",
+                                import_plan.skipped_self_servers.join(", ")
+                            ));
+                        }
+
+                        format!("; skipped {}", skipped_parts.join("; "))
                     }
                 ),
             );

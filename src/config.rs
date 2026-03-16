@@ -18,6 +18,8 @@ const CODEX_PROVIDER_NAME: &str = "codex";
 const OPENAI_API_BASE_ENV: &str = "OPENAI_API_BASE";
 const OPENAI_API_KEY_ENV: &str = "OPENAI_API_KEY";
 const OPENAI_PROVIDER_NAME: &str = "openai";
+const SELF_EXECUTABLE_NAME: &str = "msp";
+const SELF_SUBCOMMAND_NAME: &str = "mcp";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct StdioServer {
@@ -45,6 +47,12 @@ pub struct ImportableServer {
     pub command: Vec<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CodexImportPlan {
+    pub servers: Vec<ImportableServer>,
+    pub skipped_self_servers: Vec<String>,
+}
+
 pub struct OpenAiConfigUpdate {
     pub baseurl: Option<String>,
     pub key: Option<String>,
@@ -63,6 +71,9 @@ pub fn add_server(
     raw_command: Vec<String>,
 ) -> Result<String, Box<dyn Error>> {
     let normalized = normalize_add_command(raw_command);
+    if is_self_server_command(&normalized) {
+        return Err("cannot add `msp mcp` as a managed server".into());
+    }
     let server = StdioServer::from_command(normalized)?;
 
     let mut config = load_config_table(config_path)?;
@@ -211,10 +222,10 @@ pub fn update_codex_config(
     Ok(())
 }
 
-pub fn load_codex_servers_for_import() -> Result<(PathBuf, Vec<ImportableServer>), Box<dyn Error>> {
+pub fn load_codex_servers_for_import() -> Result<(PathBuf, CodexImportPlan), Box<dyn Error>> {
     let path = codex_config_path()?;
-    let servers = load_codex_servers_for_import_from_path(&path)?;
-    Ok((path, servers))
+    let plan = load_codex_servers_for_import_from_path(&path)?;
+    Ok((path, plan))
 }
 
 pub fn load_openai_runtime_config(config: &Table) -> Result<OpenAiRuntimeConfig, Box<dyn Error>> {
@@ -270,6 +281,21 @@ pub fn contains_server_name(config: &Table, requested_name: &str) -> bool {
     has_server_name(config, &normalized)
 }
 
+pub fn is_self_server_command(raw_command: &[String]) -> bool {
+    let Some(command) = raw_command.first() else {
+        return false;
+    };
+
+    let executable = Path::new(command)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or(command.as_str())
+        .trim_end_matches(".exe");
+
+    executable == SELF_EXECUTABLE_NAME
+        && raw_command.get(1).map(String::as_str) == Some(SELF_SUBCOMMAND_NAME)
+}
+
 fn normalize_add_command(raw_command: Vec<String>) -> Vec<String> {
     if raw_command.len() == 1 && looks_like_url(&raw_command[0]) {
         return vec![
@@ -291,9 +317,7 @@ fn codex_config_path() -> Result<PathBuf, Box<dyn Error>> {
     expand_tilde(Path::new(DEFAULT_CODEX_CONFIG_PATH))
 }
 
-fn load_codex_servers_for_import_from_path(
-    path: &Path,
-) -> Result<Vec<ImportableServer>, Box<dyn Error>> {
+fn load_codex_servers_for_import_from_path(path: &Path) -> Result<CodexImportPlan, Box<dyn Error>> {
     if !path.exists() {
         return Err(format!("Codex config not found at {}", path.display()).into());
     }
@@ -316,45 +340,55 @@ fn load_codex_servers_for_import_from_path(
     let mut names = servers.keys().cloned().collect::<Vec<_>>();
     names.sort();
 
-    names
-        .into_iter()
-        .map(|name| {
-            let server = servers[&name]
-                .as_table()
-                .ok_or_else(|| format!("Codex MCP server `{name}` must be a table"))?;
-            validate_importable_codex_server(&name, server)?;
+    let mut importable_servers = Vec::new();
+    let mut skipped_self_servers = Vec::new();
 
-            let command = server
-                .get("command")
-                .and_then(Value::as_str)
-                .ok_or_else(|| format!("Codex MCP server `{name}` is missing `command`"))?
-                .to_string();
-            let args = match server.get("args") {
-                None => Vec::new(),
-                Some(Value::Array(items)) => items
-                    .iter()
-                    .map(|value| {
-                        value.as_str().map(ToOwned::to_owned).ok_or_else(|| {
-                            format!("Codex MCP server `{name}` contains a non-string arg")
-                        })
+    for name in names {
+        let server = servers[&name]
+            .as_table()
+            .ok_or_else(|| format!("Codex MCP server `{name}` must be a table"))?;
+        validate_importable_codex_server(&name, server)?;
+
+        let command = server
+            .get("command")
+            .and_then(Value::as_str)
+            .ok_or_else(|| format!("Codex MCP server `{name}` is missing `command`"))?
+            .to_string();
+        let args = match server.get("args") {
+            None => Vec::new(),
+            Some(Value::Array(items)) => items
+                .iter()
+                .map(|value| {
+                    value.as_str().map(ToOwned::to_owned).ok_or_else(|| {
+                        format!("Codex MCP server `{name}` contains a non-string arg")
                     })
-                    .collect::<Result<Vec<_>, _>>()?,
-                Some(_) => {
-                    return Err(
-                        format!("Codex MCP server `{name}` has a non-array `args` field").into(),
-                    );
-                }
-            };
+                })
+                .collect::<Result<Vec<_>, _>>()?,
+            Some(_) => {
+                return Err(
+                    format!("Codex MCP server `{name}` has a non-array `args` field").into(),
+                );
+            }
+        };
 
-            let mut raw_command = vec![command];
-            raw_command.extend(args);
+        let mut raw_command = vec![command];
+        raw_command.extend(args);
 
-            Ok(ImportableServer {
-                name,
-                command: raw_command,
-            })
-        })
-        .collect()
+        if is_self_server_command(&raw_command) {
+            skipped_self_servers.push(name);
+            continue;
+        }
+
+        importable_servers.push(ImportableServer {
+            name,
+            command: raw_command,
+        });
+    }
+
+    Ok(CodexImportPlan {
+        servers: importable_servers,
+        skipped_self_servers,
+    })
 }
 
 fn insert_server(
@@ -577,10 +611,10 @@ mod tests {
         )
         .unwrap();
 
-        let servers = load_codex_servers_for_import_from_path(&config_path).unwrap();
+        let plan = load_codex_servers_for_import_from_path(&config_path).unwrap();
 
         assert_eq!(
-            servers,
+            plan.servers,
             vec![
                 ImportableServer {
                     name: "alpha".to_string(),
@@ -596,6 +630,42 @@ mod tests {
                 },
             ]
         );
+        assert!(plan.skipped_self_servers.is_empty());
+
+        fs::remove_file(config_path).unwrap();
+    }
+
+    #[test]
+    fn skips_self_server_when_loading_codex_import_plan() {
+        let config_path = unique_test_path("codex-import-self.toml");
+        fs::write(
+            &config_path,
+            r#"
+                [mcp_servers.proxy]
+                command = "msp"
+                args = ["mcp"]
+
+                [mcp_servers.github]
+                command = "npx"
+                args = ["-y", "@modelcontextprotocol/server-github"]
+            "#,
+        )
+        .unwrap();
+
+        let plan = load_codex_servers_for_import_from_path(&config_path).unwrap();
+
+        assert_eq!(
+            plan.servers,
+            vec![ImportableServer {
+                name: "github".to_string(),
+                command: vec![
+                    "npx".to_string(),
+                    "-y".to_string(),
+                    "@modelcontextprotocol/server-github".to_string(),
+                ],
+            }]
+        );
+        assert_eq!(plan.skipped_self_servers, vec!["proxy".to_string()]);
 
         fs::remove_file(config_path).unwrap();
     }
@@ -762,6 +832,33 @@ mod tests {
             "missing `default_provider` in config; model-backed commands cannot run"
         );
         assert!(!config_path.exists());
+    }
+
+    #[test]
+    fn rejects_adding_self_as_server() {
+        let config_path = unique_test_path("self-server-config.toml");
+        update_codex_config(
+            &config_path,
+            CodexConfigUpdate {
+                model: None,
+                make_default: true,
+            },
+        )
+        .unwrap();
+
+        let error = add_server(
+            &config_path,
+            "proxy",
+            vec!["msp".to_string(), "mcp".to_string()],
+        )
+        .unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            "cannot add `msp mcp` as a managed server"
+        );
+
+        fs::remove_file(config_path).unwrap();
     }
 
     #[test]

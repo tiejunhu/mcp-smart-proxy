@@ -194,6 +194,7 @@ This command:
 3. immediately runs the same refresh flow as `reload`
 
 If the default provider is missing, `add` fails before changing the config file.
+`add` also rejects `msp mcp` so the proxy does not register itself as a downstream server.
 
 Server names are normalized to lowercase kebab-case. For example, `GitHub Tools` becomes `github-tools`.
 
@@ -225,6 +226,7 @@ This command:
 `import codex` fails before making changes if `default_provider` is missing.
 
 If a Codex server name already exists in the `msp` config after normalization, that server is skipped.
+If a Codex server launches this proxy with `msp mcp`, that entry is also skipped during import.
 
 Only Codex MCP servers defined with `command` and optional string `args` are importable. Entries that rely on other settings such as `env`, `cwd`, or non-stdio transports are rejected instead of being imported partially.
 
