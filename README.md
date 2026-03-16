@@ -230,6 +230,26 @@ If a Codex server launches this proxy with `msp mcp`, that entry is also skipped
 
 Only Codex MCP servers defined with `command` and optional string `args` are importable. Entries that rely on other settings such as `env`, `cwd`, or non-stdio transports are rejected instead of being imported partially.
 
+### List configured servers
+
+```bash
+msp list
+```
+
+This command reads the configured stdio MCP servers from the config file and prints each normalized server name with its configured command line.
+
+### Remove a server
+
+```bash
+msp remove github
+```
+
+This command:
+
+1. resolves the server by exact name or normalized name
+2. removes the server definition from the config file
+3. deletes the cached tool file at `~/.cache/mcp-smart-proxy/<server-name>.json` if it exists
+
 ### Configure OpenAI settings
 
 ```bash
@@ -298,6 +318,7 @@ If a configured server has no cache yet, it is ignored until `reload` is run for
 ```bash
 msp config openai --key "$OPENAI_API_KEY" --default
 msp add github npx -y @modelcontextprotocol/server-github
+msp list
 msp mcp
 ```
 

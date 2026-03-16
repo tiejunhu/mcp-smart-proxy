@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 
 use toml::{Table, Value};
 
-use crate::paths::{expand_tilde, sanitize_name};
+use crate::paths::{cache_file_path, expand_tilde, sanitize_name};
 use crate::types::{
     CodexRuntimeConfig, ConfiguredServer, ModelProviderConfig, OpenAiRuntimeConfig,
 };
@@ -48,9 +48,23 @@ pub struct ImportableServer {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ListedServer {
+    pub name: String,
+    pub command: String,
+    pub args: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CodexImportPlan {
     pub servers: Vec<ImportableServer>,
     pub skipped_self_servers: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RemovedServer {
+    pub name: String,
+    pub cache_path: PathBuf,
+    pub cache_deleted: bool,
 }
 
 pub struct OpenAiConfigUpdate {
@@ -90,6 +104,102 @@ pub fn add_server(
     save_config_table(config_path, &config)?;
 
     Ok(name)
+}
+
+pub fn list_servers(config_path: &Path) -> Result<Vec<ListedServer>, Box<dyn Error>> {
+    let config = load_config_table(config_path)?;
+    let Some(servers) = config.get("servers").and_then(Value::as_table) else {
+        return Ok(Vec::new());
+    };
+
+    let mut names = servers.keys().cloned().collect::<Vec<_>>();
+    names.sort();
+
+    names.into_iter()
+        .map(|name| {
+            let server = servers[&name]
+                .as_table()
+                .ok_or_else(|| format!("server `{name}` must be a table"))?;
+
+            let transport = server
+                .get("transport")
+                .and_then(Value::as_str)
+                .unwrap_or("stdio");
+            if transport != "stdio" {
+                return Err(format!(
+                    "server `{name}` uses unsupported transport `{transport}`, only `stdio` is supported"
+                )
+                .into());
+            }
+
+            let command = server
+                .get("command")
+                .and_then(Value::as_str)
+                .ok_or_else(|| format!("server `{name}` is missing `command`"))?
+                .to_string();
+
+            let args = server
+                .get("args")
+                .and_then(Value::as_array)
+                .map(|items| {
+                    items
+                        .iter()
+                        .map(|value| {
+                            value.as_str().map(ToOwned::to_owned).ok_or_else(|| {
+                                format!("server `{name}` contains a non-string arg")
+                            })
+                        })
+                        .collect::<Result<Vec<_>, _>>()
+                })
+                .transpose()?
+                .unwrap_or_default();
+
+            Ok(ListedServer {
+                name,
+                command,
+                args,
+            })
+        })
+        .collect()
+}
+
+pub fn remove_server(
+    config_path: &Path,
+    requested_name: &str,
+) -> Result<RemovedServer, Box<dyn Error>> {
+    let mut config = load_config_table(config_path)?;
+    let remove_servers_table = {
+        let servers = config
+            .get_mut("servers")
+            .and_then(Value::as_table_mut)
+            .ok_or_else(|| "no `servers` table found in config".to_string())?;
+
+        let resolved_name = resolve_server_name(servers, requested_name)
+            .ok_or_else(|| format!("server `{requested_name}` not found"))?;
+        servers.remove(&resolved_name);
+
+        (resolved_name, servers.is_empty())
+    };
+    let (resolved_name, remove_servers_table) = remove_servers_table;
+
+    if remove_servers_table {
+        config.remove("servers");
+    }
+    save_config_table(config_path, &config)?;
+
+    let cache_path = cache_file_path(&resolved_name)?;
+    let cache_deleted = if cache_path.exists() {
+        fs::remove_file(&cache_path)?;
+        true
+    } else {
+        false
+    };
+
+    Ok(RemovedServer {
+        name: resolved_name,
+        cache_path,
+        cache_deleted,
+    })
 }
 
 pub fn load_config_table(path: &Path) -> Result<Table, Box<dyn Error>> {
@@ -423,6 +533,19 @@ fn has_server_name(config: &Table, name: &str) -> bool {
         .unwrap_or(false)
 }
 
+fn resolve_server_name(servers: &Table, requested_name: &str) -> Option<String> {
+    if servers.contains_key(requested_name) {
+        return Some(requested_name.to_string());
+    }
+
+    let normalized = sanitize_name(requested_name);
+    if normalized.is_empty() {
+        return None;
+    }
+
+    servers.contains_key(&normalized).then_some(normalized)
+}
+
 fn set_optional_string(table: &mut Table, key: &str, value: Option<String>) {
     if let Some(value) = value {
         table.insert(key.to_string(), Value::String(value));
@@ -524,6 +647,24 @@ mod tests {
         match previous_key {
             Some(value) => unsafe { env::set_var(OPENAI_API_KEY_ENV, value) },
             None => unsafe { env::remove_var(OPENAI_API_KEY_ENV) },
+        }
+
+        result
+    }
+
+    fn with_home_env<T>(home: &Path, test: impl FnOnce() -> T) -> T {
+        let _guard = env_lock().lock().unwrap();
+        let previous_home = env::var("HOME").ok();
+
+        unsafe {
+            env::set_var("HOME", home);
+        }
+
+        let result = test();
+
+        match previous_home {
+            Some(value) => unsafe { env::set_var("HOME", value) },
+            None => unsafe { env::remove_var("HOME") },
         }
 
         result
@@ -785,6 +926,127 @@ mod tests {
 
         assert!(contains_server_name(&config, "GitHub Tools"));
         assert!(!contains_server_name(&config, "filesystem"));
+    }
+
+    #[test]
+    fn lists_configured_servers_sorted_by_name() {
+        let config_path = unique_test_path("list-servers.toml");
+        fs::write(
+            &config_path,
+            r#"
+                [servers.beta]
+                transport = "stdio"
+                command = "uvx"
+                args = ["beta-server"]
+
+                [servers.alpha]
+                transport = "stdio"
+                command = "npx"
+                args = ["-y", "@modelcontextprotocol/server-github"]
+            "#,
+        )
+        .unwrap();
+
+        let servers = list_servers(&config_path).unwrap();
+
+        assert_eq!(
+            servers,
+            vec![
+                ListedServer {
+                    name: "alpha".to_string(),
+                    command: "npx".to_string(),
+                    args: vec![
+                        "-y".to_string(),
+                        "@modelcontextprotocol/server-github".to_string(),
+                    ],
+                },
+                ListedServer {
+                    name: "beta".to_string(),
+                    command: "uvx".to_string(),
+                    args: vec!["beta-server".to_string()],
+                },
+            ]
+        );
+
+        fs::remove_file(config_path).unwrap();
+    }
+
+    #[test]
+    fn remove_server_deletes_config_entry_and_cache_file() {
+        let config_path = unique_test_path("remove-server.toml");
+        let cache_home = unique_test_path("remove-server-home");
+
+        fs::create_dir_all(cache_home.join(".cache/mcp-smart-proxy")).unwrap();
+        fs::write(
+            &config_path,
+            r#"
+                [servers.github-tools]
+                transport = "stdio"
+                command = "npx"
+                args = ["-y", "@modelcontextprotocol/server-github"]
+
+                [servers.beta]
+                transport = "stdio"
+                command = "uvx"
+                args = ["beta-server"]
+            "#,
+        )
+        .unwrap();
+        let cache_path = cache_file_path_from_home(&cache_home, "github-tools").unwrap();
+        fs::write(&cache_path, "{}").unwrap();
+
+        let removed = with_home_env(&cache_home, || {
+            remove_server(&config_path, "GitHub Tools").unwrap()
+        });
+
+        assert_eq!(removed.name, "github-tools");
+        assert_eq!(removed.cache_path, cache_path);
+        assert!(removed.cache_deleted);
+        assert!(!cache_path.exists());
+
+        let config = load_config_table(&config_path).unwrap();
+        assert!(
+            config["servers"]
+                .as_table()
+                .unwrap()
+                .get("github-tools")
+                .is_none()
+        );
+        assert!(config["servers"].as_table().unwrap().get("beta").is_some());
+
+        fs::remove_file(config_path).unwrap();
+        fs::remove_dir_all(cache_home).unwrap();
+    }
+
+    #[test]
+    fn remove_server_drops_servers_table_when_last_entry_is_removed() {
+        let config_path = unique_test_path("remove-last-server.toml");
+        let cache_home = unique_test_path("remove-last-server-home");
+
+        fs::create_dir_all(cache_home.join(".cache/mcp-smart-proxy")).unwrap();
+        fs::write(
+            &config_path,
+            r#"
+                [servers.github]
+                transport = "stdio"
+                command = "npx"
+                args = ["-y", "@modelcontextprotocol/server-github"]
+            "#,
+        )
+        .unwrap();
+
+        let removed = with_home_env(&cache_home, || {
+            remove_server(&config_path, "github").unwrap()
+        });
+
+        assert_eq!(removed.name, "github");
+        assert!(!removed.cache_deleted);
+
+        let config = load_config_table(&config_path).unwrap();
+        assert!(config.get("servers").is_none());
+
+        fs::remove_file(config_path).unwrap();
+        fs::remove_dir_all(cache_home).unwrap();
     }
 
     #[test]

@@ -23,8 +23,12 @@ pub enum Command {
         #[arg(required = true, num_args = 1.., trailing_var_arg = true, allow_hyphen_values = true)]
         command: Vec<String>,
     },
+    /// List configured stdio MCP servers.
+    List,
     /// Import MCP servers from another tool's config and refresh their cached tools.
     Import { source: ImportSource },
+    /// Remove a configured MCP server and its cached tools.
+    Remove { name: String },
     /// Refresh cached tool metadata for a configured MCP server.
     Reload { name: String },
     /// Start a stdio MCP server that exposes cached toolset activation.

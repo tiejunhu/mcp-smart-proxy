@@ -12,11 +12,11 @@ mod types;
 
 use cli::{Cli, Command, ConfigCommand, ImportSource};
 use config::{
-    CodexConfigUpdate, OpenAiConfigUpdate, add_server, contains_server_name,
+    CodexConfigUpdate, OpenAiConfigUpdate, add_server, contains_server_name, list_servers,
     load_codex_servers_for_import, load_config_table, load_default_model_provider_config,
-    update_codex_config, update_openai_config,
+    remove_server, update_codex_config, update_openai_config,
 };
-use console::{operation_error, print_app_error, print_app_event};
+use console::{describe_command, operation_error, print_app_error, print_app_event};
 use paths::expand_tilde;
 use reload::reload_server;
 
@@ -63,6 +63,36 @@ async fn run() -> Result<(), Box<dyn Error>> {
                     cache_path.display()
                 ),
             );
+        }
+        Some(Command::List) => {
+            let servers = list_servers(&config_path).map_err(|error| {
+                operation_error(
+                    "cli.list",
+                    format!("failed to list MCP servers from {}", config_path.display()),
+                    error,
+                )
+            })?;
+
+            let message = if servers.is_empty() {
+                format!("Configured 0 MCP server(s) in {}", config_path.display())
+            } else {
+                let count = servers.len();
+                let rendered = servers
+                    .into_iter()
+                    .map(|server| {
+                        let command_line = describe_command(&server.command, &server.args);
+                        format!("{} -> {}", server.name, command_line)
+                    })
+                    .collect::<Vec<_>>()
+                    .join("; ");
+
+                format!(
+                    "Configured {count} MCP server(s) in {}: {rendered}",
+                    config_path.display()
+                )
+            };
+
+            print_app_event("cli.list", message);
         }
         Some(Command::Import {
             source: ImportSource::Codex,
@@ -170,6 +200,34 @@ async fn run() -> Result<(), Box<dyn Error>> {
 
                         format!("; skipped {}", skipped_parts.join("; "))
                     }
+                ),
+            );
+        }
+        Some(Command::Remove { name }) => {
+            let removed = remove_server(&config_path, &name).map_err(|error| {
+                operation_error(
+                    "cli.remove",
+                    format!(
+                        "failed to remove MCP server `{name}` from {}",
+                        config_path.display()
+                    ),
+                    error,
+                )
+            })?;
+
+            let cache_message = if removed.cache_deleted {
+                format!("deleted cache {}", removed.cache_path.display())
+            } else {
+                format!("cache not found at {}", removed.cache_path.display())
+            };
+
+            print_app_event(
+                "cli.remove",
+                format!(
+                    "Removed MCP server `{}` from {}; {}",
+                    removed.name,
+                    config_path.display(),
+                    cache_message
                 ),
             );
         }
