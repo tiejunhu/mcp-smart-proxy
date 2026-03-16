@@ -1,30 +1,31 @@
 # mcp-smart-proxy
 
-`mcp-smart-proxy` is a small Rust CLI that helps an AI work with multiple stdio MCP servers through one proxy server.
+`mcp-smart-proxy` is a small Rust CLI that helps an AI work with multiple MCP servers through one proxy server. By proxying multiple downstream MCP servers, it can significantly reduce the number of tools an Agent sees and reduce the cost and token usage wasted in unused tools.
 
 The installed binary name is `msp`.
 Running `msp` without any arguments prints the top-level command help.
 
-It does two things:
+It does simple things:
 
 1. It connects to a configured MCP server and caches its tool metadata.
-2. It starts a stdio MCP server that exposes the cached toolsets through a small proxy interface.
+2. It generates a one-sentence summary of the toolset using a configured AI provider, which can be either the OpenAI API or the Codex CLI.
+3. It starts a stdio MCP server that exposes the cached toolsets through a small proxy interface.
 
 ## What It Does
 
 The proxy server currently exposes two tools:
 
-- `activate_external_mcp`: returns the cached tool list for a named external MCP server.
+- `activate_external_mcp`: the description of this tool contains the MCP server name and the one-sentence summary of its toolset. Calling this tool returns the list of tools from that downstream MCP server.
 - `call_tool_in_external_mcp`: calls one downstream tool by external MCP server name and tool name.
 
-This lets another AI inspect cached toolsets first, then call only the downstream tool it needs.
+This lets Agents see only the MCP server's name/one-sentence summary first. When they want to use a tool from that server, they call `activate_external_mcp` to see the list of tools. Then they can call a specific tool with `call_tool_in_external_mcp`.
 
 ## Requirements
 
-- Rust toolchain
+- Homebrew for installation on macOS and Linux
 - An OpenAI-compatible API key for `reload` when using the `openai` provider
 - The `codex` CLI for `reload` when using the `codex` provider
-- Any downstream MCP servers must use stdio transport
+- Any downstream MCP servers must use stdio transport. If it's http transport, msp will add `npx -y mcp-remote` in front of the URL to convert it to stdio
 
 ## Install
 
@@ -37,7 +38,7 @@ brew install tiejunhu/mcp-smart-proxy/msp
 After installation, run:
 
 ```bash
-msp --help
+msp
 ```
 
 ## Build
@@ -96,40 +97,6 @@ causes:
 === MSP ERROR END ===
 ```
 
-## Release Binaries
-
-Pushing a tag that starts with `v` publishes release binaries automatically on GitHub Releases and syncs the Homebrew formula to `tiejunhu/homebrew-mcp-smart-proxy`.
-
-Before using the release workflow, add a repository secret named `HOMEBREW_TAP_GITHUB_TOKEN` with permission to push to `tiejunhu/homebrew-mcp-smart-proxy`.
-
-You can prepare a release tag with:
-
-```bash
-./publish.sh
-```
-
-This reads `version` from `Cargo.toml`, increments only the last numeric component, refreshes `Cargo.lock`, commits both files as `release <new version>`, creates `v<new version>`, and pushes that tag.
-
-To set an explicit version instead of incrementing automatically:
-
-```bash
-./publish.sh 0.0.6
-```
-
-Example:
-
-```bash
-git tag v0.1.0
-git push origin v0.1.0
-```
-
-Each release includes `tar.gz` archives for:
-
-- macOS `arm64`
-- macOS `x86_64`
-- Linux `arm64`
-- Linux `x86_64`
-
 ## Configuration
 
 The default config path is:
@@ -166,13 +133,45 @@ args = ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"]
 
 Notes:
 
-- Only stdio transport is supported.
 - `default_provider` is required for commands that need an AI model, such as `reload`.
 - `openai.key` can also come from `OPENAI_API_KEY`.
 - `openai.baseurl` can also come from `OPENAI_API_BASE`.
 - If `openai.model` or `codex.model` is missing, the default is `gpt-5.2`.
 
 ## Commands
+
+### Configure OpenAI settings
+
+```bash
+msp config openai --key "$OPENAI_API_KEY" --model gpt-5.2
+```
+
+Running `msp config openai` without any flags prints the command help instead of writing an empty update.
+
+Optional fields:
+
+```bash
+msp config openai --baseurl https://api.openai.com/v1
+msp config openai --default
+```
+
+`--default` writes `default_provider = "openai"` into the config file. Model-backed commands fail fast if `default_provider` is missing.
+
+### Configure Codex settings
+
+```bash
+msp config codex --model gpt-5.2
+```
+
+Running `msp config codex` without any flags prints the command help instead of writing an empty update.
+
+Optional fields:
+
+```bash
+msp config codex --default
+```
+
+`codex.model` is optional and defaults to `gpt-5.2`. When `default_provider = "codex"`, model-backed commands call `codex exec` to generate the same one-sentence toolset summary used by the OpenAI provider.
 
 ### Add a server
 
@@ -252,39 +251,6 @@ This command:
 2. removes the server definition from the config file
 3. deletes the cached tool file at `~/.cache/mcp-smart-proxy/<server-name>.json` if it exists
 
-### Configure OpenAI settings
-
-```bash
-msp config openai --key "$OPENAI_API_KEY" --model gpt-5.2
-```
-
-Running `msp config openai` without any flags prints the command help instead of writing an empty update.
-
-Optional fields:
-
-```bash
-msp config openai --baseurl https://api.openai.com/v1
-msp config openai --default
-```
-
-`--default` writes `default_provider = "openai"` into the config file. Model-backed commands fail fast if `default_provider` is missing.
-
-### Configure Codex settings
-
-```bash
-msp config codex --model gpt-5.2
-```
-
-Running `msp config codex` without any flags prints the command help instead of writing an empty update.
-
-Optional fields:
-
-```bash
-msp config codex --default
-```
-
-`codex.model` is optional and defaults to `gpt-5.2`. When `default_provider = "codex"`, model-backed commands call `codex exec` to generate the same one-sentence toolset summary used by the OpenAI provider.
-
 ### Reload cached tools
 
 ```bash
@@ -334,7 +300,6 @@ Only after that reload phase succeeds does the proxy start over stdio and load t
 msp config openai --key "$OPENAI_API_KEY" --default
 msp add github npx -y @modelcontextprotocol/server-github
 msp list
-msp mcp
 ```
 
 Using Codex:
@@ -342,7 +307,6 @@ Using Codex:
 ```bash
 msp config codex --default
 msp add github npx -y @modelcontextprotocol/server-github
-msp mcp
 ```
 
 Importing existing Codex MCP servers:
@@ -350,7 +314,12 @@ Importing existing Codex MCP servers:
 ```bash
 msp config codex --default
 msp import codex
-msp mcp
+```
+
+Add as MCP server in Codex:
+
+```bash
+codex add msp msp mcp
 ```
 
 ## Proxy Tool Contract
