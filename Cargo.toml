@@ -1,6 +1,6 @@
 [package]
 name = "mcp-smart-proxy"
-version = "0.0.7"
+version = "0.0.8"
 edition = "2024"
 default-run = "msp"
 description = "A smart proxy for multiple stdio MCP servers"
