@@ -2,6 +2,14 @@
 name = "mcp-smart-proxy"
 version = "0.1.0"
 edition = "2024"
+default-run = "msp"
+description = "A smart proxy for multiple stdio MCP servers"
+homepage = "https://github.com/tiejunhu/mcp-smart-proxy"
+repository = "https://github.com/tiejunhu/mcp-smart-proxy"
+
+[[bin]]
+name = "msp"
+path = "src/main.rs"
 
 [dependencies]
 aisdk = { version = "0.5.2", features = ["openai"] }

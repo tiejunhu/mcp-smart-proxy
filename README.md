@@ -2,6 +2,8 @@
 
 `mcp-smart-proxy` is a small Rust CLI that helps an AI work with multiple stdio MCP servers through one proxy server.
 
+The installed binary name is `msp`.
+
 It does two things:
 
 1. It connects to a configured MCP server and caches its tool metadata.
@@ -22,10 +24,24 @@ This lets another AI inspect cached toolsets first, then call only the downstrea
 - An OpenAI-compatible API key for `reload`
 - Any downstream MCP servers must use stdio transport
 
+## Install
+
+Install the latest released build with Homebrew:
+
+```bash
+brew install tiejunhu/mcp-smart-proxy/msp
+```
+
+After installation, run:
+
+```bash
+msp --help
+```
+
 ## Build
 
 ```bash
-cargo build
+cargo build --bin msp
 ```
 
 Run the CLI during development with:
@@ -36,7 +52,7 @@ cargo run -- --help
 
 ## Release Binaries
 
-Pushing a tag that starts with `v` publishes release binaries automatically on GitHub Releases.
+Pushing a tag that starts with `v` publishes release binaries automatically on GitHub Releases and updates `Formula/msp.rb` for Homebrew.
 
 Example:
 
@@ -93,7 +109,7 @@ Notes:
 ### Add a server
 
 ```bash
-mcp-smart-proxy add github npx -y @modelcontextprotocol/server-github
+msp add github npx -y @modelcontextprotocol/server-github
 ```
 
 This writes the server definition into the config file.
@@ -109,25 +125,25 @@ npx -y mcp-remote <URL>
 Example:
 
 ```bash
-mcp-smart-proxy add remote-demo https://example.com/mcp
+msp add remote-demo https://example.com/mcp
 ```
 
 ### Configure OpenAI settings
 
 ```bash
-mcp-smart-proxy config openai --key "$OPENAI_API_KEY" --model gpt-5.2
+msp config openai --key "$OPENAI_API_KEY" --model gpt-5.2
 ```
 
 Optional fields:
 
 ```bash
-mcp-smart-proxy config openai --baseurl https://api.openai.com/v1
+msp config openai --baseurl https://api.openai.com/v1
 ```
 
 ### Reload cached tools
 
 ```bash
-mcp-smart-proxy reload github
+msp reload github
 ```
 
 This command:
@@ -148,7 +164,7 @@ The cache is stored at:
 ### Start the proxy MCP server
 
 ```bash
-mcp-smart-proxy mcp
+msp mcp
 ```
 
 The server runs over stdio and loads every configured server that already has a cache file.
@@ -158,10 +174,10 @@ If a configured server has no cache yet, it is ignored until `reload` is run for
 ## Typical Workflow
 
 ```bash
-mcp-smart-proxy add github npx -y @modelcontextprotocol/server-github
-mcp-smart-proxy config openai --key "$OPENAI_API_KEY"
-mcp-smart-proxy reload github
-mcp-smart-proxy mcp
+msp add github npx -y @modelcontextprotocol/server-github
+msp config openai --key "$OPENAI_API_KEY"
+msp reload github
+msp mcp
 ```
 
 ## Proxy Tool Contract
