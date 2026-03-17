@@ -11,13 +11,14 @@ mod paths;
 mod reload;
 mod types;
 
-use cli::{Cli, Command, ConfigCommand, ImportSource, ProviderName};
+use cli::{Cli, Command, ConfigCommand, ImportSource, InstallTarget, ProviderName};
 use config::{
-    CodexConfigUpdate, OpenAiConfigUpdate, OpencodeConfigUpdate, add_server, contains_server_name,
-    import_server, list_servers, load_codex_servers_for_import, load_config_table,
-    load_default_model_provider_config, load_model_provider_config,
-    load_opencode_servers_for_import, remove_server, update_codex_config, update_openai_config,
-    update_opencode_config,
+    CodexConfigUpdate, InstallMcpServerResult, InstallMcpServerStatus, OpenAiConfigUpdate,
+    OpencodeConfigUpdate, add_server, contains_server_name, import_server,
+    install_codex_mcp_server, install_opencode_mcp_server, list_servers,
+    load_codex_servers_for_import, load_config_table, load_default_model_provider_config,
+    load_model_provider_config, load_opencode_servers_for_import, remove_server,
+    update_codex_config, update_openai_config, update_opencode_config,
 };
 use console::{describe_command, operation_error, print_app_error, print_app_event};
 use paths::expand_tilde;
@@ -331,6 +332,30 @@ async fn run() -> Result<(), Box<dyn Error>> {
                     format!("Skipped self-referential server `{name}`"),
                 );
             }
+        }
+        Some(Command::Install {
+            target: InstallTarget::Codex,
+        }) => {
+            let installed = install_codex_mcp_server().map_err(|error| {
+                operation_error(
+                    "cli.install.codex",
+                    "failed to install msp into Codex config",
+                    error,
+                )
+            })?;
+            print_install_result("cli.install.codex", "codex", &installed);
+        }
+        Some(Command::Install {
+            target: InstallTarget::Opencode,
+        }) => {
+            let installed = install_opencode_mcp_server().map_err(|error| {
+                operation_error(
+                    "cli.install.opencode",
+                    "failed to install msp into OpenCode config",
+                    error,
+                )
+            })?;
+            print_install_result("cli.install.opencode", "opencode", &installed);
         }
         Some(Command::Remove { name }) => {
             let removed = remove_server(&config_path, &name).map_err(|error| {
@@ -672,6 +697,29 @@ fn import_source_provider_name(source: ImportSource) -> &'static str {
         ImportSource::Codex => "codex",
         ImportSource::Opencode => "opencode",
     }
+}
+
+fn print_install_result(stage: &str, provider: &str, installed: &InstallMcpServerResult) {
+    let command_line = format!("msp mcp --provider {provider}");
+    let message = match installed.status {
+        InstallMcpServerStatus::AlreadyInstalled => format!(
+            "MCP server `{}` already exists in {} with command `{command_line}`",
+            installed.name,
+            installed.config_path.display()
+        ),
+        InstallMcpServerStatus::Updated => format!(
+            "Updated MCP server `{}` in {} to command `{command_line}`",
+            installed.name,
+            installed.config_path.display()
+        ),
+        InstallMcpServerStatus::Installed => format!(
+            "Installed MCP server `{}` into {} with command `{command_line}`",
+            installed.name,
+            installed.config_path.display()
+        ),
+    };
+
+    print_app_event(stage, message);
 }
 
 #[cfg(test)]

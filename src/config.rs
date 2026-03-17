@@ -3,6 +3,7 @@ use std::error::Error;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use serde_json::{Map as JsonMap, Value as JsonValue};
 use toml::{Table, Value};
 
 use crate::paths::{cache_file_path, expand_tilde, sanitize_name};
@@ -43,6 +44,12 @@ impl StdioServer {
             args: parts.collect(),
         })
     }
+
+    fn raw_command(&self) -> Vec<String> {
+        let mut command = vec![self.command.clone()];
+        command.extend(self.args.iter().cloned());
+        command
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -70,6 +77,20 @@ pub struct RemovedServer {
     pub name: String,
     pub cache_path: PathBuf,
     pub cache_deleted: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InstallMcpServerStatus {
+    AlreadyInstalled,
+    Updated,
+    Installed,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InstallMcpServerResult {
+    pub name: String,
+    pub config_path: PathBuf,
+    pub status: InstallMcpServerStatus,
 }
 
 pub struct OpenAiConfigUpdate {
@@ -407,6 +428,93 @@ pub fn load_opencode_servers_for_import() -> Result<(PathBuf, ImportPlan), Box<d
     Ok((path, plan))
 }
 
+pub fn install_codex_mcp_server() -> Result<InstallMcpServerResult, Box<dyn Error>> {
+    let config_path = codex_config_path()?;
+    let mut config = load_config_table(&config_path)?;
+    let desired_server = proxy_stdio_server(CODEX_PROVIDER_NAME);
+
+    let (name, status) = {
+        let servers_value = config
+            .entry("mcp_servers")
+            .or_insert_with(|| Value::Table(Table::new()));
+        let servers = servers_value
+            .as_table_mut()
+            .ok_or_else(|| "`mcp_servers` in Codex config must be a table".to_string())?;
+
+        match inspect_codex_self_server(servers, CODEX_PROVIDER_NAME) {
+            Some((name, true)) => {
+                return Ok(InstallMcpServerResult {
+                    name,
+                    config_path,
+                    status: InstallMcpServerStatus::AlreadyInstalled,
+                });
+            }
+            Some((name, false)) => {
+                servers.insert(name.clone(), codex_server_value(&desired_server));
+                (name, InstallMcpServerStatus::Updated)
+            }
+            None => {
+                let name = next_available_server_name(servers.keys().map(String::as_str));
+                servers.insert(name.clone(), codex_server_value(&desired_server));
+                (name, InstallMcpServerStatus::Installed)
+            }
+        }
+    };
+
+    save_config_table(&config_path, &config)?;
+
+    Ok(InstallMcpServerResult {
+        name,
+        config_path,
+        status,
+    })
+}
+
+pub fn install_opencode_mcp_server() -> Result<InstallMcpServerResult, Box<dyn Error>> {
+    let config_path = opencode_config_path()?;
+    let mut config = load_opencode_config(&config_path)?;
+    let desired_server = proxy_stdio_server(OPENCODE_PROVIDER_NAME);
+
+    let (name, status) = {
+        let root = config
+            .as_object_mut()
+            .ok_or_else(|| "OpenCode config root must be a JSON object".to_string())?;
+        let servers_value = root
+            .entry("mcp".to_string())
+            .or_insert_with(|| JsonValue::Object(JsonMap::new()));
+        let servers = servers_value
+            .as_object_mut()
+            .ok_or_else(|| "`mcp` in OpenCode config must be an object".to_string())?;
+
+        match inspect_opencode_self_server(servers, OPENCODE_PROVIDER_NAME) {
+            Some((name, true)) => {
+                return Ok(InstallMcpServerResult {
+                    name,
+                    config_path,
+                    status: InstallMcpServerStatus::AlreadyInstalled,
+                });
+            }
+            Some((name, false)) => {
+                servers.insert(name.clone(), opencode_server_value(&desired_server));
+                (name, InstallMcpServerStatus::Updated)
+            }
+            None => {
+                let name = next_available_server_name(servers.keys().map(String::as_str));
+                servers.insert(name.clone(), opencode_server_value(&desired_server));
+                (name, InstallMcpServerStatus::Installed)
+            }
+        }
+    };
+
+    save_opencode_config(&config_path, &config)?;
+
+    Ok(InstallMcpServerResult {
+        name,
+        config_path,
+        status,
+    })
+}
+
 pub fn load_openai_runtime_config(config: &Table) -> Result<OpenAiRuntimeConfig, Box<dyn Error>> {
     let table = config.get("openai").and_then(Value::as_table);
 
@@ -687,6 +795,32 @@ fn insert_server(
     Ok(())
 }
 
+fn codex_server_value(server: &StdioServer) -> Value {
+    let mut server_table = Table::new();
+    server_table.insert("command".to_string(), Value::String(server.command.clone()));
+    server_table.insert(
+        "args".to_string(),
+        Value::Array(server.args.iter().cloned().map(Value::String).collect()),
+    );
+    Value::Table(server_table)
+}
+
+fn opencode_server_value(server: &StdioServer) -> JsonValue {
+    JsonValue::Object(JsonMap::from_iter([
+        ("type".to_string(), JsonValue::String("local".to_string())),
+        (
+            "command".to_string(),
+            JsonValue::Array(
+                server
+                    .raw_command()
+                    .into_iter()
+                    .map(JsonValue::String)
+                    .collect(),
+            ),
+        ),
+    ]))
+}
+
 fn has_server_name(config: &Table, name: &str) -> bool {
     config
         .get("servers")
@@ -712,6 +846,139 @@ fn set_optional_string(table: &mut Table, key: &str, value: Option<String>) {
     if let Some(value) = value {
         table.insert(key.to_string(), Value::String(value));
     }
+}
+
+fn proxy_stdio_server(provider: &str) -> StdioServer {
+    StdioServer {
+        command: SELF_EXECUTABLE_NAME.to_string(),
+        args: vec![
+            SELF_SUBCOMMAND_NAME.to_string(),
+            "--provider".to_string(),
+            provider.to_string(),
+        ],
+    }
+}
+
+fn inspect_codex_self_server(servers: &Table, provider: &str) -> Option<(String, bool)> {
+    inspect_self_server(
+        servers.iter().filter_map(|(name, value)| {
+            let server = value.as_table()?;
+            let raw_command = codex_server_raw_command(server)?;
+            Some((name.clone(), raw_command))
+        }),
+        provider,
+    )
+}
+
+fn inspect_opencode_self_server(
+    servers: &JsonMap<String, JsonValue>,
+    provider: &str,
+) -> Option<(String, bool)> {
+    inspect_self_server(
+        servers.iter().filter_map(|(name, value)| {
+            let server = value.as_object()?;
+            let raw_command = opencode_server_raw_command(server)?;
+            Some((name.clone(), raw_command))
+        }),
+        provider,
+    )
+}
+
+fn inspect_self_server(
+    candidates: impl Iterator<Item = (String, Vec<String>)>,
+    provider: &str,
+) -> Option<(String, bool)> {
+    let mut self_server_names = Vec::new();
+
+    for (name, raw_command) in candidates {
+        if !is_self_server_command(&raw_command) {
+            continue;
+        }
+        if self_server_uses_provider(&raw_command, provider) {
+            return Some((name, true));
+        }
+        self_server_names.push(name);
+    }
+
+    pick_existing_self_server_name(self_server_names).map(|name| (name, false))
+}
+
+fn codex_server_raw_command(server: &Table) -> Option<Vec<String>> {
+    let command = server.get("command")?.as_str()?.to_string();
+    let args = match server.get("args") {
+        None => Vec::new(),
+        Some(Value::Array(items)) => items
+            .iter()
+            .map(|value| value.as_str().map(ToOwned::to_owned))
+            .collect::<Option<Vec<_>>>()?,
+        Some(_) => return None,
+    };
+
+    let mut raw_command = vec![command];
+    raw_command.extend(args);
+    Some(raw_command)
+}
+
+fn opencode_server_raw_command(server: &JsonMap<String, JsonValue>) -> Option<Vec<String>> {
+    server
+        .get("command")?
+        .as_array()?
+        .iter()
+        .map(|value| value.as_str().map(ToOwned::to_owned))
+        .collect()
+}
+
+fn self_server_uses_provider(raw_command: &[String], provider: &str) -> bool {
+    is_self_server_command(raw_command)
+        && raw_command.len() == 4
+        && raw_command[1] == SELF_SUBCOMMAND_NAME
+        && raw_command[2] == "--provider"
+        && raw_command[3] == provider
+}
+
+fn pick_existing_self_server_name(mut names: Vec<String>) -> Option<String> {
+    names.sort_by(|left, right| match (left == "msp", right == "msp") {
+        (true, false) => std::cmp::Ordering::Less,
+        (false, true) => std::cmp::Ordering::Greater,
+        _ => left.cmp(right),
+    });
+    names.into_iter().next()
+}
+
+fn next_available_server_name<'a>(existing_names: impl Iterator<Item = &'a str>) -> String {
+    let existing_names = existing_names.collect::<std::collections::BTreeSet<_>>();
+    if !existing_names.contains("msp") {
+        return "msp".to_string();
+    }
+
+    let mut index = 1usize;
+    loop {
+        let candidate = format!("msp{index}");
+        if !existing_names.contains(candidate.as_str()) {
+            return candidate;
+        }
+        index += 1;
+    }
+}
+
+fn load_opencode_config(path: &Path) -> Result<JsonValue, Box<dyn Error>> {
+    if !path.exists() {
+        return Ok(JsonValue::Object(JsonMap::new()));
+    }
+
+    let contents = fs::read_to_string(path)?;
+    let value = serde_json::from_str(&contents)?;
+    Ok(value)
+}
+
+fn save_opencode_config(path: &Path, config: &JsonValue) -> Result<(), Box<dyn Error>> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+
+    let contents = serde_json::to_string_pretty(config)?;
+    fs::write(path, contents)?;
+    Ok(())
 }
 
 fn validate_importable_codex_server(name: &str, server: &Table) -> Result<(), Box<dyn Error>> {
@@ -864,6 +1131,24 @@ mod tests {
         result
     }
 
+    fn with_codex_home_env<T>(codex_home: &Path, test: impl FnOnce() -> T) -> T {
+        let _guard = env_lock().lock().unwrap();
+        let previous_codex_home = env::var(CODEX_HOME_ENV).ok();
+
+        unsafe {
+            env::set_var(CODEX_HOME_ENV, codex_home);
+        }
+
+        let result = test();
+
+        match previous_codex_home {
+            Some(value) => unsafe { env::set_var(CODEX_HOME_ENV, value) },
+            None => unsafe { env::remove_var(CODEX_HOME_ENV) },
+        }
+
+        result
+    }
+
     #[test]
     fn expands_default_config_path() {
         let home = PathBuf::from("/tmp/mcp-smart-proxy-home");
@@ -927,6 +1212,161 @@ mod tests {
             Some(value) => unsafe { env::set_var(CODEX_HOME_ENV, value) },
             None => unsafe { env::remove_var(CODEX_HOME_ENV) },
         }
+    }
+
+    #[test]
+    fn installs_codex_mcp_server_when_missing() {
+        let codex_home = unique_test_path("codex-install-home");
+        fs::create_dir_all(&codex_home).unwrap();
+
+        with_codex_home_env(&codex_home, || {
+            let installed = install_codex_mcp_server().unwrap();
+
+            assert_eq!(installed.name, "msp");
+            assert_eq!(installed.status, InstallMcpServerStatus::Installed);
+            assert_eq!(installed.config_path, codex_home.join("config.toml"));
+
+            let config = load_config_table(&installed.config_path).unwrap();
+            let server = config["mcp_servers"]["msp"].as_table().unwrap();
+            assert_eq!(server["command"].as_str(), Some("msp"));
+            assert_eq!(
+                server["args"].as_array().unwrap(),
+                &vec![
+                    Value::String("mcp".to_string()),
+                    Value::String("--provider".to_string()),
+                    Value::String("codex".to_string()),
+                ]
+            );
+        });
+
+        fs::remove_dir_all(codex_home).unwrap();
+    }
+
+    #[test]
+    fn updates_existing_codex_self_server_to_requested_provider() {
+        let codex_home = unique_test_path("codex-update-home");
+        fs::create_dir_all(&codex_home).unwrap();
+        let config_path = codex_home.join("config.toml");
+        fs::write(
+            &config_path,
+            r#"
+                [mcp_servers.proxy]
+                command = "msp"
+                args = ["mcp", "--provider", "opencode"]
+            "#,
+        )
+        .unwrap();
+
+        with_codex_home_env(&codex_home, || {
+            let installed = install_codex_mcp_server().unwrap();
+
+            assert_eq!(installed.name, "proxy");
+            assert_eq!(installed.status, InstallMcpServerStatus::Updated);
+
+            let config = load_config_table(&config_path).unwrap();
+            let server = config["mcp_servers"]["proxy"].as_table().unwrap();
+            assert_eq!(server["command"].as_str(), Some("msp"));
+            assert_eq!(
+                server["args"].as_array().unwrap(),
+                &vec![
+                    Value::String("mcp".to_string()),
+                    Value::String("--provider".to_string()),
+                    Value::String("codex".to_string()),
+                ]
+            );
+        });
+
+        fs::remove_dir_all(codex_home).unwrap();
+    }
+
+    #[test]
+    fn installs_codex_mcp_server_with_numbered_name_when_msp_is_taken() {
+        let codex_home = unique_test_path("codex-conflict-home");
+        fs::create_dir_all(&codex_home).unwrap();
+        let config_path = codex_home.join("config.toml");
+        fs::write(
+            &config_path,
+            r#"
+                [mcp_servers.msp]
+                command = "npx"
+                args = ["-y", "@modelcontextprotocol/server-github"]
+            "#,
+        )
+        .unwrap();
+
+        with_codex_home_env(&codex_home, || {
+            let installed = install_codex_mcp_server().unwrap();
+
+            assert_eq!(installed.name, "msp1");
+            assert_eq!(installed.status, InstallMcpServerStatus::Installed);
+
+            let config = load_config_table(&config_path).unwrap();
+            let server = config["mcp_servers"]["msp1"].as_table().unwrap();
+            assert_eq!(server["command"].as_str(), Some("msp"));
+        });
+
+        fs::remove_dir_all(codex_home).unwrap();
+    }
+
+    #[test]
+    fn installs_opencode_mcp_server_when_missing() {
+        let home = unique_test_path("opencode-install-home");
+        fs::create_dir_all(&home).unwrap();
+
+        with_home_env(&home, || {
+            let installed = install_opencode_mcp_server().unwrap();
+
+            assert_eq!(installed.name, "msp");
+            assert_eq!(installed.status, InstallMcpServerStatus::Installed);
+            assert_eq!(
+                installed.config_path,
+                home.join(".config/opencode/opencode.json")
+            );
+
+            let contents = fs::read_to_string(&installed.config_path).unwrap();
+            let config: JsonValue = serde_json::from_str(&contents).unwrap();
+            let server = config["mcp"]["msp"].as_object().unwrap();
+            assert_eq!(server["type"].as_str(), Some("local"));
+            assert_eq!(
+                server["command"].as_array().unwrap(),
+                &vec![
+                    JsonValue::String("msp".to_string()),
+                    JsonValue::String("mcp".to_string()),
+                    JsonValue::String("--provider".to_string()),
+                    JsonValue::String("opencode".to_string()),
+                ]
+            );
+        });
+
+        fs::remove_dir_all(home).unwrap();
+    }
+
+    #[test]
+    fn recognizes_existing_opencode_self_server_with_matching_provider() {
+        let home = unique_test_path("opencode-existing-home");
+        fs::create_dir_all(home.join(".config/opencode")).unwrap();
+        let config_path = home.join(".config/opencode/opencode.json");
+        fs::write(
+            &config_path,
+            r#"{
+                "mcp": {
+                    "proxy": {
+                        "type": "local",
+                        "command": ["msp", "mcp", "--provider", "opencode"]
+                    }
+                }
+            }"#,
+        )
+        .unwrap();
+
+        with_home_env(&home, || {
+            let installed = install_opencode_mcp_server().unwrap();
+
+            assert_eq!(installed.name, "proxy");
+            assert_eq!(installed.status, InstallMcpServerStatus::AlreadyInstalled);
+        });
+
+        fs::remove_dir_all(home).unwrap();
     }
 
     #[test]

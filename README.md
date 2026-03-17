@@ -285,6 +285,31 @@ If an OpenCode server launches this proxy with `msp mcp`, that entry is also ski
 
 Only OpenCode MCP servers defined with a string-array `command` and optional `type = "local"` are importable. Entries that rely on other settings or use non-local server types are rejected instead of being imported partially.
 
+### Install this proxy into Codex or OpenCode
+
+Install into Codex:
+
+```bash
+msp install codex
+```
+
+Install into OpenCode:
+
+```bash
+msp install opencode
+```
+
+This command:
+
+1. reads the target config file for Codex or OpenCode
+2. checks whether that config already contains an MCP server that runs `msp mcp`
+3. if that server already uses `msp mcp --provider codex` or `msp mcp --provider opencode`, reports it as already installed
+4. otherwise updates the existing `msp mcp` entry to the requested provider, or creates a new entry if none exists
+5. prefers the server name `msp`; if that name is already used by another server, creates `msp1`, `msp2`, and so on
+
+`install codex` writes into `$CODEX_HOME/config.toml` or `~/.codex/config.toml`.
+`install opencode` writes into `~/.config/opencode/opencode.json`.
+
 ### List configured servers
 
 ```bash
@@ -398,10 +423,16 @@ Importing existing OpenCode MCP servers:
 msp import opencode
 ```
 
-Add as MCP server in Codex:
+Install into Codex:
 
 ```bash
-codex add msp msp mcp
+msp install codex
+```
+
+Install into OpenCode:
+
+```bash
+msp install opencode
 ```
 
 ## Proxy Tool Contract

@@ -39,6 +39,8 @@ pub enum Command {
         provider: Option<ProviderName>,
         source: ImportSource,
     },
+    /// Install this proxy as an MCP server in another tool's config.
+    Install { target: InstallTarget },
     /// Remove a configured MCP server and its cached tools.
     Remove { name: String },
     /// Refresh cached tool metadata for one configured MCP server, or all servers when omitted.
@@ -61,6 +63,12 @@ pub enum Command {
 
 #[derive(Debug, Clone, ValueEnum)]
 pub enum ImportSource {
+    Codex,
+    Opencode,
+}
+
+#[derive(Debug, Clone, ValueEnum)]
+pub enum InstallTarget {
     Codex,
     Opencode,
 }
@@ -189,6 +197,18 @@ mod tests {
                 assert!(matches!(source, ImportSource::Codex));
             }
             other => panic!("expected import command, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_install_codex_target() {
+        let cli = Cli::parse_from(["msp", "install", "codex"]);
+
+        match cli.command {
+            Some(Command::Install { target }) => {
+                assert!(matches!(target, InstallTarget::Codex));
+            }
+            other => panic!("expected install command, got {other:?}"),
         }
     }
 
