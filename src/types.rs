@@ -9,13 +9,6 @@ pub struct ConfiguredServer {
 }
 
 #[derive(Debug, Clone)]
-pub struct OpenAiRuntimeConfig {
-    pub baseurl: Option<String>,
-    pub key: String,
-    pub model: String,
-}
-
-#[derive(Debug, Clone)]
 pub struct CodexRuntimeConfig {
     pub model: String,
 }
@@ -27,7 +20,6 @@ pub struct OpencodeRuntimeConfig {
 
 #[derive(Debug, Clone)]
 pub enum ModelProviderConfig {
-    OpenAi(OpenAiRuntimeConfig),
     Codex(CodexRuntimeConfig),
     Opencode(OpencodeRuntimeConfig),
 }

@@ -82,7 +82,6 @@ pub enum InstallTarget {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 pub enum ProviderName {
-    Openai,
     Codex,
     Opencode,
 }
@@ -90,7 +89,6 @@ pub enum ProviderName {
 impl ProviderName {
     pub fn as_str(self) -> &'static str {
         match self {
-            Self::Openai => "openai",
             Self::Codex => "codex",
             Self::Opencode => "opencode",
         }
@@ -99,18 +97,6 @@ impl ProviderName {
 
 #[derive(Debug, Subcommand)]
 pub enum ConfigCommand {
-    /// Update OpenAI settings.
-    #[command(arg_required_else_help = true)]
-    Openai {
-        #[arg(long)]
-        baseurl: Option<String>,
-        #[arg(long)]
-        key: Option<String>,
-        #[arg(long)]
-        model: Option<String>,
-        #[arg(long = "default")]
-        make_default: bool,
-    },
     /// Update Codex settings.
     #[command(arg_required_else_help = true)]
     Codex {
@@ -196,11 +182,11 @@ mod tests {
 
     #[test]
     fn parses_import_with_provider_override() {
-        let cli = Cli::parse_from(["msp", "import", "--provider", "openai", "codex"]);
+        let cli = Cli::parse_from(["msp", "import", "--provider", "opencode", "codex"]);
 
         match cli.command {
             Some(Command::Import { provider, source }) => {
-                assert!(matches!(provider, Some(ProviderName::Openai)));
+                assert!(matches!(provider, Some(ProviderName::Opencode)));
                 assert!(matches!(source, ImportSource::Codex));
             }
             other => panic!("expected import command, got {other:?}"),
@@ -268,16 +254,6 @@ mod tests {
             }
             other => panic!("expected mcp command, got {other:?}"),
         }
-    }
-
-    #[test]
-    fn config_openai_without_flags_shows_help() {
-        let error = Cli::try_parse_from(["msp", "config", "openai"]).unwrap_err();
-
-        assert_eq!(
-            error.kind(),
-            ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand
-        );
     }
 
     #[test]

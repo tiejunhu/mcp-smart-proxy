@@ -4,10 +4,6 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 
-use aisdk::{
-    core::{DynamicModel, LanguageModelRequest},
-    providers::OpenAI,
-};
 use rmcp::{
     ServiceExt,
     model::Tool,
@@ -23,8 +19,8 @@ use crate::console::{
 };
 use crate::paths::{cache_file_path, unix_epoch_ms};
 use crate::types::{
-    CachedTools, CodexRuntimeConfig, ConfiguredServer, ModelProviderConfig, OpenAiRuntimeConfig,
-    OpencodeRuntimeConfig, ToolSnapshot, tool_snapshot,
+    CachedTools, CodexRuntimeConfig, ConfiguredServer, ModelProviderConfig, OpencodeRuntimeConfig,
+    ToolSnapshot, tool_snapshot,
 };
 
 pub struct ReloadResult {
@@ -245,7 +241,6 @@ async fn summarize_tools(
     })?;
 
     match provider {
-        ModelProviderConfig::OpenAi(openai) => summarize_tools_with_openai(openai, &prompt).await,
         ModelProviderConfig::Codex(codex) => summarize_tools_with_codex(codex, &prompt).await,
         ModelProviderConfig::Opencode(opencode) => {
             summarize_tools_with_opencode(opencode, &prompt).await
@@ -272,46 +267,6 @@ Do not run shell commands or inspect the workspace. Use only the tool data provi
 If the tools cover multiple related workflows, summarize the common decision boundary.\n\n\
 Tools:\n{tools_json}"
     ))
-}
-
-async fn summarize_tools_with_openai(
-    openai: &OpenAiRuntimeConfig,
-    prompt: &str,
-) -> Result<String, Box<dyn Error>> {
-    let mut model_builder = OpenAI::<DynamicModel>::builder()
-        .model_name(openai.model.clone())
-        .api_key(openai.key.clone());
-    if let Some(baseurl) = &openai.baseurl {
-        model_builder = model_builder.base_url(baseurl.clone());
-    }
-    let model = model_builder.build().map_err(|error| {
-        operation_error(
-            "reload.summarize_tools.openai.build_model",
-            "failed to build the OpenAI client",
-            Box::new(error),
-        )
-    })?;
-
-    let mut request = LanguageModelRequest::builder()
-        .model(model)
-        .prompt(prompt.to_string())
-        .build();
-    let response = request.generate_text().await.map_err(|error| {
-        operation_error(
-            "reload.summarize_tools.openai.generate",
-            "OpenAI request failed while generating the tool summary",
-            Box::new(error),
-        )
-    })?;
-    non_empty_summary(
-        Some(response.text().as_deref().ok_or_else(|| {
-            message_error(
-                "reload.summarize_tools.openai.response",
-                "OpenAI returned no text field in the summary response",
-            )
-        })?),
-        "OpenAI returned an empty summary",
-    )
 }
 
 async fn summarize_tools_with_codex(

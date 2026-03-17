@@ -8,7 +8,7 @@ Running `msp` without any arguments prints the top-level command help.
 It does simple things:
 
 1. It connects to a configured MCP server and caches its tool metadata.
-2. It generates a one-sentence summary of the toolset using a configured AI provider, which can be the OpenAI API, the Codex CLI, or the OpenCode CLI.
+2. It generates a one-sentence summary of the toolset using a configured AI provider, which can be the Codex CLI or the OpenCode CLI.
 3. It starts a stdio MCP server that exposes the cached toolsets through a small proxy interface.
 
 ## What It Does
@@ -23,7 +23,6 @@ This lets Agents see only the MCP server's name/one-sentence summary first. When
 ## Requirements
 
 - Homebrew for installation on macOS and Linux
-- An OpenAI-compatible API key for summary using the `openai` provider
 - The `codex` CLI for summary using the `codex` provider
 - The `opencode` CLI for summary using the `opencode` provider
 - Any downstream MCP servers must use stdio transport. If it's http transport, msp will add `npx -y mcp-remote` in front of the URL to convert it to stdio
@@ -111,12 +110,7 @@ You can override it with `--config <PATH>`.
 Example config:
 
 ```toml
-default_provider = "openai"
-
-[openai]
-key = "sk-..."
-model = "gpt-5.2"
-# baseurl = "https://api.openai.com/v1"
+default_provider = "codex"
 
 [codex]
 model = "gpt-5.2"
@@ -139,30 +133,11 @@ Notes:
 
 - `default_provider` is required for `add`, `reload`, and `mcp` only when `--provider` is not supplied.
 - `import codex` and `import opencode` do not require `default_provider`; each import flow uses its source provider to generate the one-sentence tool summary.
-- `add`, `reload`, `import`, and `mcp` accept `--provider <openai|codex|opencode>`. When present, `--provider` takes priority over the normal provider-selection rule.
-- `openai.key` can also come from `OPENAI_API_KEY`.
-- `openai.baseurl` can also come from `OPENAI_API_BASE`.
-- If `openai.model` or `codex.model` is missing, the default is `gpt-5.2`.
+- `add`, `reload`, `import`, and `mcp` accept `--provider <codex|opencode>`. When present, `--provider` takes priority over the normal provider-selection rule.
+- If `codex.model` is missing, the default is `gpt-5.2`.
 - If `opencode.model` is missing, the default is `openai/gpt-5.2`.
 
 ## Commands
-
-### Configure OpenAI settings
-
-```bash
-msp config openai --key "$OPENAI_API_KEY" --model gpt-5.2
-```
-
-Running `msp config openai` without any flags prints the command help instead of writing an empty update.
-
-Optional fields:
-
-```bash
-msp config openai --baseurl https://api.openai.com/v1
-msp config openai --default
-```
-
-`--default` writes `default_provider = "openai"` into the config file. Commands that use the configured default provider fail fast if `default_provider` is missing.
 
 ### Configure Codex settings
 
@@ -178,7 +153,7 @@ Optional fields:
 msp config codex --default
 ```
 
-`codex.model` is optional and defaults to `gpt-5.2`. When Codex is the active summary provider, `msp` calls `codex exec` to generate the same one-sentence toolset summary used by the OpenAI provider.
+`codex.model` is optional and defaults to `gpt-5.2`. When Codex is the active summary provider, `msp` calls `codex exec` to generate the one-sentence toolset summary.
 
 ### Configure OpenCode settings
 
@@ -240,7 +215,7 @@ msp import codex
 Override the provider used during import:
 
 ```bash
-msp import --provider openai codex
+msp import --provider opencode codex
 ```
 
 This command:
@@ -421,8 +396,8 @@ The cache is stored at:
 
 `reload` requires either `--provider` or a supported `default_provider`.
 
-- For `openai`, configure `openai.key` or `OPENAI_API_KEY`.
 - For `codex`, install the `codex` CLI; `reload` runs `codex exec`.
+- For `opencode`, install the `opencode` CLI; `reload` runs `opencode run`.
 
 ### Start the proxy MCP server
 
@@ -445,7 +420,7 @@ Only after that reload phase succeeds does the proxy start over stdio and load t
 ## Typical Workflow
 
 ```bash
-msp config openai --key "$OPENAI_API_KEY" --default
+msp config codex --default
 msp add github npx -y @modelcontextprotocol/server-github
 msp list
 ```

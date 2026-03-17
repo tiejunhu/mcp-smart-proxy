@@ -14,13 +14,13 @@ mod types;
 use cli::{Cli, Command, ConfigCommand, ImportSource, InstallTarget, ProviderName};
 use config::{
     CodexConfigUpdate, ImportPlan, InstallMcpServerResult, InstallMcpServerStatus,
-    OpenAiConfigUpdate, OpencodeConfigUpdate, ReplaceMcpServersResult, RestoreMcpServersResult,
-    add_server, contains_server_name, import_server, install_codex_mcp_server,
-    install_opencode_mcp_server, list_servers, load_codex_servers_for_import, load_config_table,
+    OpencodeConfigUpdate, ReplaceMcpServersResult, RestoreMcpServersResult, add_server,
+    contains_server_name, import_server, install_codex_mcp_server, install_opencode_mcp_server,
+    list_servers, load_codex_servers_for_import, load_config_table,
     load_default_model_provider_config, load_model_provider_config,
     load_opencode_servers_for_import, remove_server, replace_codex_mcp_servers,
     replace_opencode_mcp_servers, restore_codex_mcp_servers, restore_opencode_mcp_servers,
-    update_codex_config, update_openai_config, update_opencode_config,
+    update_codex_config, update_opencode_config,
 };
 use console::{describe_command, operation_error, print_app_error, print_app_event};
 use paths::expand_tilde;
@@ -608,39 +608,6 @@ async fn run() -> Result<(), Box<dyn Error>> {
                         error,
                     )
                 })?;
-        }
-        Some(Command::Config {
-            command:
-                ConfigCommand::Openai {
-                    baseurl,
-                    key,
-                    model,
-                    make_default,
-                },
-        }) => {
-            update_openai_config(
-                &config_path,
-                OpenAiConfigUpdate {
-                    baseurl,
-                    key,
-                    model,
-                    make_default,
-                },
-            )
-            .map_err(|error| {
-                operation_error(
-                    "cli.config.openai",
-                    format!(
-                        "failed to update OpenAI config in {}",
-                        config_path.display()
-                    ),
-                    error,
-                )
-            })?;
-            print_app_event(
-                "cli.config.openai",
-                format!("Updated OpenAI config in {}", config_path.display()),
-            );
         }
         Some(Command::Config {
             command:
