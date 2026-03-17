@@ -331,6 +331,31 @@ The backup files are:
 
 If a backup file already exists, `--replace` updates it in place by server name so the backup stays deduplicated.
 
+### Restore backed up MCP servers into Codex or OpenCode
+
+Restore into Codex:
+
+```bash
+msp restore codex
+```
+
+Restore into OpenCode:
+
+```bash
+msp restore opencode
+```
+
+This command:
+
+1. reads the target backup file created by `msp install --replace`
+2. removes every MCP server in the target config whose command is `msp mcp ...`
+3. merges every backed up MCP server back into the target config by server name
+
+`restore codex` reads from `$CODEX_HOME/config.msp-backup.toml` or `~/.codex/config.msp-backup.toml`.
+`restore opencode` reads from `~/.config/opencode/opencode.msp-backup.json`.
+
+If the backup file is missing, `restore` fails instead of restoring partially.
+
 ### List configured servers
 
 ```bash
@@ -461,6 +486,13 @@ Replace existing target MCP servers during install:
 ```bash
 msp install codex --replace
 msp install opencode --replace
+```
+
+Restore backed up MCP servers into Codex or OpenCode:
+
+```bash
+msp restore codex
+msp restore opencode
 ```
 
 ## Proxy Tool Contract

@@ -46,6 +46,8 @@ pub enum Command {
         replace: bool,
         target: InstallTarget,
     },
+    /// Remove installed msp MCP servers from another tool's config and restore backed up MCP servers.
+    Restore { target: InstallTarget },
     /// Remove a configured MCP server and its cached tools.
     Remove { name: String },
     /// Refresh cached tool metadata for one configured MCP server, or all servers when omitted.
@@ -228,6 +230,18 @@ mod tests {
                 assert!(matches!(target, InstallTarget::Opencode));
             }
             other => panic!("expected install command, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_restore_opencode_target() {
+        let cli = Cli::parse_from(["msp", "restore", "opencode"]);
+
+        match cli.command {
+            Some(Command::Restore { target }) => {
+                assert!(matches!(target, InstallTarget::Opencode));
+            }
+            other => panic!("expected restore command, got {other:?}"),
         }
     }
 

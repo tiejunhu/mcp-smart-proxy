@@ -101,6 +101,14 @@ pub struct ReplaceMcpServersResult {
     pub removed_server_count: usize,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RestoreMcpServersResult {
+    pub config_path: PathBuf,
+    pub backup_path: PathBuf,
+    pub removed_self_server_count: usize,
+    pub restored_server_count: usize,
+}
+
 pub struct OpenAiConfigUpdate {
     pub baseurl: Option<String>,
     pub key: Option<String>,
@@ -533,6 +541,16 @@ pub fn replace_opencode_mcp_servers() -> Result<ReplaceMcpServersResult, Box<dyn
     replace_opencode_mcp_servers_from_path(&config_path)
 }
 
+pub fn restore_codex_mcp_servers() -> Result<RestoreMcpServersResult, Box<dyn Error>> {
+    let config_path = codex_config_path()?;
+    restore_codex_mcp_servers_from_path(&config_path)
+}
+
+pub fn restore_opencode_mcp_servers() -> Result<RestoreMcpServersResult, Box<dyn Error>> {
+    let config_path = opencode_config_path()?;
+    restore_opencode_mcp_servers_from_path(&config_path)
+}
+
 pub fn load_openai_runtime_config(config: &Table) -> Result<OpenAiRuntimeConfig, Box<dyn Error>> {
     let table = config.get("openai").and_then(Value::as_table);
 
@@ -696,6 +714,64 @@ fn replace_opencode_mcp_servers_from_path(
         backup_path,
         backed_up_server_count: existing_servers.len(),
         removed_server_count: existing_servers.len(),
+    })
+}
+
+fn restore_codex_mcp_servers_from_path(
+    config_path: &Path,
+) -> Result<RestoreMcpServersResult, Box<dyn Error>> {
+    let backup_path = sibling_backup_path(config_path, "msp-backup");
+    let backup = load_required_codex_backup(&backup_path)?;
+    let restored_servers = backup
+        .get("mcp_servers")
+        .and_then(Value::as_table)
+        .ok_or_else(|| {
+            format!(
+                "no `mcp_servers` table found in Codex backup {}",
+                backup_path.display()
+            )
+        })?
+        .clone();
+
+    let mut config = load_config_table(config_path)?;
+    let removed_self_server_count = remove_codex_self_servers(&mut config)?;
+    merge_codex_servers_into_target(&mut config, &restored_servers)?;
+    save_config_table(config_path, &config)?;
+
+    Ok(RestoreMcpServersResult {
+        config_path: config_path.to_path_buf(),
+        backup_path,
+        removed_self_server_count,
+        restored_server_count: restored_servers.len(),
+    })
+}
+
+fn restore_opencode_mcp_servers_from_path(
+    config_path: &Path,
+) -> Result<RestoreMcpServersResult, Box<dyn Error>> {
+    let backup_path = sibling_backup_path(config_path, "msp-backup");
+    let backup = load_required_opencode_backup(&backup_path)?;
+    let restored_servers = backup
+        .get("mcp")
+        .and_then(JsonValue::as_object)
+        .ok_or_else(|| {
+            format!(
+                "no `mcp` object found in OpenCode backup {}",
+                backup_path.display()
+            )
+        })?
+        .clone();
+
+    let mut config = load_opencode_config(config_path)?;
+    let removed_self_server_count = remove_opencode_self_servers(&mut config)?;
+    merge_opencode_servers_into_target(&mut config, &restored_servers)?;
+    save_opencode_config(config_path, &config)?;
+
+    Ok(RestoreMcpServersResult {
+        config_path: config_path.to_path_buf(),
+        backup_path,
+        removed_self_server_count,
+        restored_server_count: restored_servers.len(),
     })
 }
 
@@ -1093,6 +1169,120 @@ fn merge_opencode_servers_into_backup(
 
     save_opencode_config(backup_path, &backup)?;
     Ok(())
+}
+
+fn merge_codex_servers_into_target(
+    config: &mut Table,
+    servers: &Table,
+) -> Result<(), Box<dyn Error>> {
+    let target_servers_value = config
+        .entry("mcp_servers")
+        .or_insert_with(|| Value::Table(Table::new()));
+    let target_servers = target_servers_value
+        .as_table_mut()
+        .ok_or_else(|| "`mcp_servers` in Codex config must be a table".to_string())?;
+
+    for (name, server) in servers {
+        target_servers.insert(name.clone(), server.clone());
+    }
+
+    Ok(())
+}
+
+fn merge_opencode_servers_into_target(
+    config: &mut JsonValue,
+    servers: &JsonMap<String, JsonValue>,
+) -> Result<(), Box<dyn Error>> {
+    let root = config
+        .as_object_mut()
+        .ok_or_else(|| "OpenCode config root must be a JSON object".to_string())?;
+    let target_servers_value = root
+        .entry("mcp".to_string())
+        .or_insert_with(|| JsonValue::Object(JsonMap::new()));
+    let target_servers = target_servers_value
+        .as_object_mut()
+        .ok_or_else(|| "`mcp` in OpenCode config must be an object".to_string())?;
+
+    for (name, server) in servers {
+        target_servers.insert(name.clone(), server.clone());
+    }
+
+    Ok(())
+}
+
+fn load_required_codex_backup(path: &Path) -> Result<Table, Box<dyn Error>> {
+    if !path.exists() {
+        return Err(format!("Codex backup not found at {}", path.display()).into());
+    }
+
+    load_config_table(path)
+}
+
+fn load_required_opencode_backup(path: &Path) -> Result<JsonValue, Box<dyn Error>> {
+    if !path.exists() {
+        return Err(format!("OpenCode backup not found at {}", path.display()).into());
+    }
+
+    load_opencode_config(path)
+}
+
+fn remove_codex_self_servers(config: &mut Table) -> Result<usize, Box<dyn Error>> {
+    let Some(servers_value) = config.get_mut("mcp_servers") else {
+        return Ok(0);
+    };
+    let servers = servers_value
+        .as_table_mut()
+        .ok_or_else(|| "`mcp_servers` in Codex config must be a table".to_string())?;
+
+    let names = servers
+        .iter()
+        .filter_map(|(name, value)| {
+            let server = value.as_table()?;
+            let raw_command = codex_server_raw_command(server)?;
+            is_self_server_command(&raw_command).then_some(name.clone())
+        })
+        .collect::<Vec<_>>();
+
+    for name in &names {
+        servers.remove(name);
+    }
+
+    if servers.is_empty() {
+        config.remove("mcp_servers");
+    }
+
+    Ok(names.len())
+}
+
+fn remove_opencode_self_servers(config: &mut JsonValue) -> Result<usize, Box<dyn Error>> {
+    let root = config
+        .as_object_mut()
+        .ok_or_else(|| "OpenCode config root must be a JSON object".to_string())?;
+    let Some(servers_value) = root.get_mut("mcp") else {
+        return Ok(0);
+    };
+    let servers = servers_value
+        .as_object_mut()
+        .ok_or_else(|| "`mcp` in OpenCode config must be an object".to_string())?;
+
+    let names = servers
+        .iter()
+        .filter_map(|(name, value)| {
+            let server = value.as_object()?;
+            let raw_command = opencode_server_raw_command(server)?;
+            is_self_server_command(&raw_command).then_some(name.clone())
+        })
+        .collect::<Vec<_>>();
+
+    for name in &names {
+        servers.remove(name);
+    }
+
+    if servers.is_empty() {
+        root.remove("mcp");
+    }
+
+    Ok(names.len())
 }
 
 fn validate_importable_codex_server(name: &str, server: &Table) -> Result<(), Box<dyn Error>> {
@@ -1508,6 +1698,56 @@ mod tests {
     }
 
     #[test]
+    fn restores_codex_servers_from_backup_after_removing_self_servers() {
+        let config_path = unique_test_path("codex-restore.toml");
+        let backup_path = sibling_backup_path(&config_path, "msp-backup");
+        fs::write(
+            &config_path,
+            r#"
+                [mcp_servers.msp]
+                command = "msp"
+                args = ["mcp", "--provider", "codex"]
+
+                [mcp_servers.proxy]
+                command = "msp"
+                args = ["mcp", "--provider", "opencode"]
+            "#,
+        )
+        .unwrap();
+        fs::write(
+            &backup_path,
+            r#"
+                [mcp_servers.alpha]
+                command = "npx"
+                args = ["-y", "alpha-server"]
+
+                [mcp_servers.beta]
+                command = "uvx"
+                args = ["beta-server"]
+            "#,
+        )
+        .unwrap();
+
+        let restored = restore_codex_mcp_servers_from_path(&config_path).unwrap();
+
+        assert_eq!(restored.config_path, config_path);
+        assert_eq!(restored.backup_path, backup_path);
+        assert_eq!(restored.removed_self_server_count, 2);
+        assert_eq!(restored.restored_server_count, 2);
+
+        let config = load_config_table(&config_path).unwrap();
+        let servers = config["mcp_servers"].as_table().unwrap();
+        assert_eq!(servers.len(), 2);
+        assert!(servers.get("msp").is_none());
+        assert!(servers.get("proxy").is_none());
+        assert_eq!(servers["alpha"]["command"].as_str(), Some("npx"));
+        assert_eq!(servers["beta"]["command"].as_str(), Some("uvx"));
+
+        fs::remove_file(config_path).unwrap();
+        fs::remove_file(backup_path).unwrap();
+    }
+
+    #[test]
     fn recognizes_existing_opencode_self_server_with_matching_provider() {
         let home = unique_test_path("opencode-existing-home");
         fs::create_dir_all(home.join(".config/opencode")).unwrap();
@@ -1601,6 +1841,75 @@ mod tests {
             ]
         );
         assert!(backup_servers.get("gamma").is_some());
+
+        fs::remove_file(config_path).unwrap();
+        fs::remove_file(backup_path).unwrap();
+    }
+
+    #[test]
+    fn restores_opencode_servers_from_backup_after_removing_self_servers() {
+        let config_path = unique_test_path("opencode-restore.json");
+        let backup_path = sibling_backup_path(&config_path, "msp-backup");
+        fs::write(
+            &config_path,
+            r#"{
+                "mcp": {
+                    "msp": {
+                        "type": "local",
+                        "command": ["msp", "mcp", "--provider", "opencode"]
+                    },
+                    "proxy": {
+                        "type": "local",
+                        "command": ["msp", "mcp", "--provider", "codex"]
+                    }
+                }
+            }"#,
+        )
+        .unwrap();
+        fs::write(
+            &backup_path,
+            r#"{
+                "mcp": {
+                    "alpha": {
+                        "type": "local",
+                        "command": ["npx", "-y", "alpha-server"]
+                    },
+                    "beta": {
+                        "type": "local",
+                        "command": ["uvx", "beta-server"]
+                    }
+                }
+            }"#,
+        )
+        .unwrap();
+
+        let restored = restore_opencode_mcp_servers_from_path(&config_path).unwrap();
+
+        assert_eq!(restored.config_path, config_path);
+        assert_eq!(restored.backup_path, backup_path);
+        assert_eq!(restored.removed_self_server_count, 2);
+        assert_eq!(restored.restored_server_count, 2);
+
+        let config = load_opencode_config(&config_path).unwrap();
+        let servers = config["mcp"].as_object().unwrap();
+        assert_eq!(servers.len(), 2);
+        assert!(servers.get("msp").is_none());
+        assert!(servers.get("proxy").is_none());
+        assert_eq!(
+            servers["alpha"]["command"].as_array().unwrap(),
+            &vec![
+                JsonValue::String("npx".to_string()),
+                JsonValue::String("-y".to_string()),
+                JsonValue::String("alpha-server".to_string()),
+            ]
+        );
+        assert_eq!(
+            servers["beta"]["command"].as_array().unwrap(),
+            &vec![
+                JsonValue::String("uvx".to_string()),
+                JsonValue::String("beta-server".to_string()),
+            ]
+        );
 
         fs::remove_file(config_path).unwrap();
         fs::remove_file(backup_path).unwrap();

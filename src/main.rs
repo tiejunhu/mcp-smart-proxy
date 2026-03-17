@@ -14,13 +14,13 @@ mod types;
 use cli::{Cli, Command, ConfigCommand, ImportSource, InstallTarget, ProviderName};
 use config::{
     CodexConfigUpdate, ImportPlan, InstallMcpServerResult, InstallMcpServerStatus,
-    OpenAiConfigUpdate, OpencodeConfigUpdate, ReplaceMcpServersResult, add_server,
-    contains_server_name, import_server, install_codex_mcp_server, install_opencode_mcp_server,
-    list_servers, load_codex_servers_for_import, load_config_table,
+    OpenAiConfigUpdate, OpencodeConfigUpdate, ReplaceMcpServersResult, RestoreMcpServersResult,
+    add_server, contains_server_name, import_server, install_codex_mcp_server,
+    install_opencode_mcp_server, list_servers, load_codex_servers_for_import, load_config_table,
     load_default_model_provider_config, load_model_provider_config,
     load_opencode_servers_for_import, remove_server, replace_codex_mcp_servers,
-    replace_opencode_mcp_servers, update_codex_config, update_openai_config,
-    update_opencode_config,
+    replace_opencode_mcp_servers, restore_codex_mcp_servers, restore_opencode_mcp_servers,
+    update_codex_config, update_openai_config, update_opencode_config,
 };
 use console::{describe_command, operation_error, print_app_error, print_app_event};
 use paths::expand_tilde;
@@ -386,6 +386,30 @@ async fn run() -> Result<(), Box<dyn Error>> {
                 })?;
                 print_install_result("cli.install.opencode", "opencode", &installed);
             }
+        }
+        Some(Command::Restore {
+            target: InstallTarget::Codex,
+        }) => {
+            let restored = restore_codex_mcp_servers().map_err(|error| {
+                operation_error(
+                    "cli.restore.codex",
+                    "failed to restore MCP servers into Codex config",
+                    error,
+                )
+            })?;
+            print_restore_result("cli.restore.codex", "codex", &restored);
+        }
+        Some(Command::Restore {
+            target: InstallTarget::Opencode,
+        }) => {
+            let restored = restore_opencode_mcp_servers().map_err(|error| {
+                operation_error(
+                    "cli.restore.opencode",
+                    "failed to restore MCP servers into OpenCode config",
+                    error,
+                )
+            })?;
+            print_restore_result("cli.restore.opencode", "opencode", &restored);
         }
         Some(Command::Remove { name }) => {
             let removed = remove_server(&config_path, &name).map_err(|error| {
@@ -891,6 +915,19 @@ fn print_replace_result(stage: &str, replaced: &ReplaceMcpServersResult) {
         replaced.config_path.display(),
         replaced.backup_path.display(),
         replaced.removed_server_count,
+    );
+
+    print_app_event(stage, message);
+}
+
+fn print_restore_result(stage: &str, provider: &str, restored: &RestoreMcpServersResult) {
+    let message = format!(
+        "Removed {} `msp mcp` server(s) from {} {} config and restored {} MCP server(s) from {}",
+        restored.removed_self_server_count,
+        provider,
+        restored.config_path.display(),
+        restored.restored_server_count,
+        restored.backup_path.display(),
     );
 
     print_app_event(stage, message);
