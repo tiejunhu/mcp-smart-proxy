@@ -11,16 +11,18 @@ mod paths;
 mod reload;
 mod types;
 
-use cli::{Cli, Command, ConfigCommand, ImportSource};
+use cli::{Cli, Command, ConfigCommand, ImportSource, ProviderName};
 use config::{
-    CodexConfigUpdate, OpenAiConfigUpdate, OpencodeConfigUpdate, add_server,
-    contains_server_name, list_servers, load_codex_servers_for_import, load_config_table,
-    load_default_model_provider_config, load_opencode_servers_for_import, remove_server,
-    update_codex_config, update_openai_config, update_opencode_config,
+    CodexConfigUpdate, OpenAiConfigUpdate, OpencodeConfigUpdate, add_server, contains_server_name,
+    import_server, list_servers, load_codex_servers_for_import, load_config_table,
+    load_default_model_provider_config, load_model_provider_config,
+    load_opencode_servers_for_import, remove_server, update_codex_config, update_openai_config,
+    update_opencode_config,
 };
 use console::{describe_command, operation_error, print_app_error, print_app_event};
 use paths::expand_tilde;
-use reload::reload_server;
+use reload::{reload_server, reload_server_with_provider};
+use types::ModelProviderConfig;
 
 #[tokio::main]
 async fn main() {
@@ -37,8 +39,35 @@ async fn run() -> Result<(), Box<dyn Error>> {
     })?;
 
     match cli.command {
-        Some(Command::Add { name, command }) => {
-            let server_name = add_server(&config_path, &name, command).map_err(|error| {
+        Some(Command::Add {
+            provider,
+            name,
+            command,
+        }) => {
+            let config = load_config_table(&config_path).map_err(|error| {
+                operation_error(
+                    "cli.add.load_config",
+                    format!("failed to load config from {}", config_path.display()),
+                    error,
+                )
+            })?;
+            let resolved_provider =
+                resolve_default_command_provider(&config, provider).map_err(|error| {
+                    operation_error(
+                        "cli.add.load_provider",
+                        format!(
+                            "failed to load the provider configuration before adding into {}",
+                            config_path.display()
+                        ),
+                        error,
+                    )
+                })?;
+            let server_name = if provider.is_some() {
+                import_server(&config_path, &name, command)
+            } else {
+                add_server(&config_path, &name, command)
+            }
+            .map_err(|error| {
                 operation_error(
                     "cli.add",
                     format!(
@@ -49,7 +78,7 @@ async fn run() -> Result<(), Box<dyn Error>> {
                 )
             })?;
             let reload_result =
-                reload_server(&config_path, &server_name)
+                reload_server_with_provider(&config_path, &server_name, &resolved_provider)
                     .await
                     .map_err(|error| {
                         operation_error(
@@ -98,25 +127,27 @@ async fn run() -> Result<(), Box<dyn Error>> {
             }
         }
         Some(Command::Import {
+            provider,
             source: ImportSource::Codex,
         }) => {
             let mut config = load_config_table(&config_path).map_err(|error| {
                 operation_error(
-                    "cli.import.codex.validate_provider.load_config",
+                    "cli.import.codex.load_config",
                     format!("failed to load config from {}", config_path.display()),
                     error,
                 )
             })?;
-            let _ = load_default_model_provider_config(&config).map_err(|error| {
-                operation_error(
-                    "cli.import.codex.validate_provider",
-                    format!(
-                        "failed to validate model provider before importing from Codex into {}",
-                        config_path.display()
-                    ),
-                    error,
-                )
-            })?;
+            let provider = resolve_import_provider(&config, provider, ImportSource::Codex)
+                .map_err(|error| {
+                    operation_error(
+                        "cli.import.codex.load_provider",
+                        format!(
+                            "failed to load the provider configuration before importing into {}",
+                            config_path.display()
+                        ),
+                        error,
+                    )
+                })?;
             let (codex_config_path, import_plan) =
                 load_codex_servers_for_import().map_err(|error| {
                     operation_error(
@@ -134,8 +165,8 @@ async fn run() -> Result<(), Box<dyn Error>> {
                     continue;
                 }
 
-                let server_name =
-                    add_server(&config_path, &server.name, server.command).map_err(|error| {
+                let server_name = import_server(&config_path, &server.name, server.command)
+                    .map_err(|error| {
                         operation_error(
                             "cli.import.codex.add",
                             format!(
@@ -148,7 +179,7 @@ async fn run() -> Result<(), Box<dyn Error>> {
                         )
                     })?;
                 let reload_result =
-                    reload_server(&config_path, &server_name)
+                    reload_server_with_provider(&config_path, &server_name, &provider)
                         .await
                         .map_err(|error| {
                             operation_error(
@@ -199,25 +230,27 @@ async fn run() -> Result<(), Box<dyn Error>> {
             }
         }
         Some(Command::Import {
+            provider,
             source: ImportSource::Opencode,
         }) => {
             let mut config = load_config_table(&config_path).map_err(|error| {
                 operation_error(
-                    "cli.import.opencode.validate_provider.load_config",
+                    "cli.import.opencode.load_config",
                     format!("failed to load config from {}", config_path.display()),
                     error,
                 )
             })?;
-            let _ = load_default_model_provider_config(&config).map_err(|error| {
-                operation_error(
-                    "cli.import.opencode.validate_provider",
-                    format!(
-                        "failed to validate model provider before importing from OpenCode into {}",
-                        config_path.display()
-                    ),
-                    error,
-                )
-            })?;
+            let provider = resolve_import_provider(&config, provider, ImportSource::Opencode)
+                .map_err(|error| {
+                    operation_error(
+                        "cli.import.opencode.load_provider",
+                        format!(
+                            "failed to load the provider configuration before importing into {}",
+                            config_path.display()
+                        ),
+                        error,
+                    )
+                })?;
             let (opencode_config_path, import_plan) =
                 load_opencode_servers_for_import().map_err(|error| {
                     operation_error(
@@ -235,8 +268,8 @@ async fn run() -> Result<(), Box<dyn Error>> {
                     continue;
                 }
 
-                let server_name =
-                    add_server(&config_path, &server.name, server.command).map_err(|error| {
+                let server_name = import_server(&config_path, &server.name, server.command)
+                    .map_err(|error| {
                         operation_error(
                             "cli.import.opencode.add",
                             format!(
@@ -249,7 +282,7 @@ async fn run() -> Result<(), Box<dyn Error>> {
                         )
                     })?;
                 let reload_result =
-                    reload_server(&config_path, &server_name)
+                    reload_server_with_provider(&config_path, &server_name, &provider)
                         .await
                         .map_err(|error| {
                             operation_error(
@@ -327,8 +360,34 @@ async fn run() -> Result<(), Box<dyn Error>> {
                 ),
             );
         }
-        Some(Command::Reload { name: Some(name) }) => {
-            let reload_result = reload_server(&config_path, &name).await.map_err(|error| {
+        Some(Command::Reload {
+            provider,
+            name: Some(name),
+        }) => {
+            let reload_result = if let Some(provider) = provider {
+                let config = load_config_table(&config_path).map_err(|error| {
+                    operation_error(
+                        "cli.reload.load_config",
+                        format!("failed to load config from {}", config_path.display()),
+                        error,
+                    )
+                })?;
+                let resolved_provider = resolve_default_command_provider(&config, Some(provider))
+                    .map_err(|error| {
+                    operation_error(
+                        "cli.reload.load_provider",
+                        format!(
+                            "failed to load the provider configuration before reloading from {}",
+                            config_path.display()
+                        ),
+                        error,
+                    )
+                })?;
+                reload_server_with_provider(&config_path, &name, &resolved_provider).await
+            } else {
+                reload_server(&config_path, &name).await
+            }
+            .map_err(|error| {
                 operation_error(
                     "cli.reload",
                     format!("failed to reload MCP server `{name}`"),
@@ -350,7 +409,10 @@ async fn run() -> Result<(), Box<dyn Error>> {
                 },
             );
         }
-        Some(Command::Reload { name: None }) => {
+        Some(Command::Reload {
+            provider,
+            name: None,
+        }) => {
             let servers = list_servers(&config_path).map_err(|error| {
                 operation_error(
                     "cli.reload.list_servers",
@@ -368,19 +430,45 @@ async fn run() -> Result<(), Box<dyn Error>> {
                     format!("Reloaded 0 MCP server(s) from {}", config_path.display()),
                 );
             } else {
+                let resolved_provider = if let Some(provider) = provider {
+                    let config = load_config_table(&config_path).map_err(|error| {
+                        operation_error(
+                            "cli.reload.load_config",
+                            format!("failed to load config from {}", config_path.display()),
+                            error,
+                        )
+                    })?;
+                    Some(
+                        resolve_default_command_provider(&config, Some(provider)).map_err(|error| {
+                            operation_error(
+                                "cli.reload.load_provider",
+                                format!(
+                                    "failed to load the provider configuration before reloading from {}",
+                                    config_path.display()
+                                ),
+                                error,
+                            )
+                        })?,
+                    )
+                } else {
+                    None
+                };
                 let mut results = Vec::new();
                 for server in servers {
                     let server_name = server.name;
-                    let reload_result =
-                        reload_server(&config_path, &server_name)
-                            .await
-                            .map_err(|error| {
-                                operation_error(
-                                    "cli.reload.all",
-                                    format!("failed to reload MCP server `{server_name}`"),
-                                    error,
-                                )
-                            })?;
+                    let reload_result = match &resolved_provider {
+                        Some(provider) => {
+                            reload_server_with_provider(&config_path, &server_name, provider).await
+                        }
+                        None => reload_server(&config_path, &server_name).await,
+                    }
+                    .map_err(|error| {
+                        operation_error(
+                            "cli.reload.all",
+                            format!("failed to reload MCP server `{server_name}`"),
+                            error,
+                        )
+                    })?;
                     let status = if reload_result.updated {
                         "cache updated"
                     } else {
@@ -405,8 +493,31 @@ async fn run() -> Result<(), Box<dyn Error>> {
                 }
             }
         }
-        Some(Command::Mcp) => {
-            mcp_server::serve_cached_toolsets(&config_path)
+        Some(Command::Mcp { provider }) => {
+            let resolved_provider = if let Some(provider) = provider {
+                let config = load_config_table(&config_path).map_err(|error| {
+                    operation_error(
+                        "cli.mcp.load_config",
+                        format!("failed to load config from {}", config_path.display()),
+                        error,
+                    )
+                })?;
+                Some(
+                    resolve_default_command_provider(&config, Some(provider)).map_err(|error| {
+                        operation_error(
+                            "cli.mcp.load_provider",
+                            format!(
+                                "failed to load the provider configuration before starting the proxy from {}",
+                                config_path.display()
+                            ),
+                            error,
+                        )
+                    })?,
+                )
+            } else {
+                None
+            };
+            mcp_server::serve_cached_toolsets(&config_path, resolved_provider)
                 .await
                 .map_err(|error| {
                     operation_error(
@@ -495,7 +606,10 @@ async fn run() -> Result<(), Box<dyn Error>> {
             .map_err(|error| {
                 operation_error(
                     "cli.config.opencode",
-                    format!("failed to update OpenCode config in {}", config_path.display()),
+                    format!(
+                        "failed to update OpenCode config in {}",
+                        config_path.display()
+                    ),
                     error,
                 )
             })?;
@@ -532,6 +646,34 @@ fn format_local_timestamp(epoch_ms: u128) -> Option<String> {
     Some(datetime.format("%Y-%m-%d %H:%M:%S").to_string())
 }
 
+fn resolve_default_command_provider(
+    config: &toml::Table,
+    provider_override: Option<ProviderName>,
+) -> Result<ModelProviderConfig, Box<dyn Error>> {
+    match provider_override {
+        Some(provider) => load_model_provider_config(config, provider.as_str()),
+        None => load_default_model_provider_config(config),
+    }
+}
+
+fn resolve_import_provider(
+    config: &toml::Table,
+    provider_override: Option<ProviderName>,
+    source: ImportSource,
+) -> Result<ModelProviderConfig, Box<dyn Error>> {
+    match provider_override {
+        Some(provider) => load_model_provider_config(config, provider.as_str()),
+        None => load_model_provider_config(config, import_source_provider_name(source)),
+    }
+}
+
+fn import_source_provider_name(source: ImportSource) -> &'static str {
+    match source {
+        ImportSource::Codex => "codex",
+        ImportSource::Opencode => "opencode",
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -551,5 +693,25 @@ mod tests {
         assert_eq!(rendered.chars().nth(10), Some(' '));
         assert_eq!(rendered.chars().nth(13), Some(':'));
         assert_eq!(rendered.chars().nth(16), Some(':'));
+    }
+
+    #[test]
+    fn resolves_import_provider_from_source_when_override_is_missing() {
+        let config: toml::Table = toml::from_str("").unwrap();
+
+        let provider = resolve_import_provider(&config, None, ImportSource::Codex).unwrap();
+
+        assert!(matches!(provider, ModelProviderConfig::Codex(_)));
+    }
+
+    #[test]
+    fn resolves_import_provider_from_override_before_source() {
+        let config: toml::Table = toml::from_str("").unwrap();
+
+        let provider =
+            resolve_import_provider(&config, Some(ProviderName::Opencode), ImportSource::Codex)
+                .unwrap();
+
+        assert!(matches!(provider, ModelProviderConfig::Opencode(_)));
     }
 }

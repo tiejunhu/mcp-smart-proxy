@@ -47,6 +47,29 @@ pub async fn reload_server(config_path: &Path, name: &str) -> Result<ReloadResul
             error,
         )
     })?;
+    reload_server_with_resolved_provider(config_path, name, &provider).await
+}
+
+pub async fn reload_server_with_provider(
+    config_path: &Path,
+    name: &str,
+    provider: &ModelProviderConfig,
+) -> Result<ReloadResult, Box<dyn Error>> {
+    reload_server_with_resolved_provider(config_path, name, provider).await
+}
+
+async fn reload_server_with_resolved_provider(
+    config_path: &Path,
+    name: &str,
+    provider: &ModelProviderConfig,
+) -> Result<ReloadResult, Box<dyn Error>> {
+    let config = load_config_table(config_path).map_err(|error| {
+        operation_error(
+            "reload.load_config",
+            format!("failed to load config from {}", config_path.display()),
+            error,
+        )
+    })?;
     let (resolved_name, server) = configured_server(&config, name).map_err(|error| {
         operation_error(
             "reload.resolve_server",
@@ -492,7 +515,10 @@ async fn summarize_tools_with_opencode(
         let _ = fs::remove_dir(&workdir);
         return Err(message_error(
             "reload.summarize_tools.opencode.exit_status",
-            format!("`opencode run` exited unsuccessfully while summarizing tools; status={}", output.status),
+            format!(
+                "`opencode run` exited unsuccessfully while summarizing tools; status={}",
+                output.status
+            ),
         ));
     }
 

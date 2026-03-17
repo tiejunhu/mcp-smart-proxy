@@ -26,8 +26,8 @@ use crate::console::{
     print_external_output_if_present, spawn_stderr_collector,
 };
 use crate::paths::{cache_file_path_from_home, home_dir, sanitize_name};
-use crate::reload::reload_server;
-use crate::types::{CachedTools, ConfiguredServer, ToolSnapshot};
+use crate::reload::{reload_server, reload_server_with_provider};
+use crate::types::{CachedTools, ConfiguredServer, ModelProviderConfig, ToolSnapshot};
 
 const ACTIVATE_EXTERNAL_MCP_NAME: &str = "activate_external_mcp";
 const CALL_TOOL_IN_EXTERNAL_MCP_NAME: &str = "call_tool_in_external_mcp";
@@ -60,17 +60,22 @@ struct CallToolInExternalMcpRequest {
     args_in_json: String,
 }
 
-pub async fn serve_cached_toolsets(config_path: &Path) -> Result<(), Box<dyn Error>> {
-    reload_all_toolsets(config_path).await.map_err(|error| {
-        operation_error(
-            "mcp.reload_all_toolsets",
-            format!(
-                "failed to reload configured MCP servers before starting proxy with config {}",
-                config_path.display()
-            ),
-            error,
-        )
-    })?;
+pub async fn serve_cached_toolsets(
+    config_path: &Path,
+    provider: Option<ModelProviderConfig>,
+) -> Result<(), Box<dyn Error>> {
+    reload_all_toolsets(config_path, provider.as_ref())
+        .await
+        .map_err(|error| {
+            operation_error(
+                "mcp.reload_all_toolsets",
+                format!(
+                    "failed to reload configured MCP servers before starting proxy with config {}",
+                    config_path.display()
+                ),
+                error,
+            )
+        })?;
 
     let config = load_config_table(config_path).map_err(|error| {
         operation_error(
@@ -106,7 +111,10 @@ pub async fn serve_cached_toolsets(config_path: &Path) -> Result<(), Box<dyn Err
     Ok(())
 }
 
-async fn reload_all_toolsets(config_path: &Path) -> Result<(), Box<dyn Error>> {
+async fn reload_all_toolsets(
+    config_path: &Path,
+    provider: Option<&ModelProviderConfig>,
+) -> Result<(), Box<dyn Error>> {
     let servers = list_servers(config_path).map_err(|error| {
         operation_error(
             "mcp.reload_all_toolsets.list_servers",
@@ -120,15 +128,19 @@ async fn reload_all_toolsets(config_path: &Path) -> Result<(), Box<dyn Error>> {
 
     for server in servers {
         let server_name = server.name;
-        reload_server(config_path, &server_name)
-            .await
-            .map_err(|error| {
-                operation_error(
-                    "mcp.reload_all_toolsets.reload_server",
-                    format!("failed to reload MCP server `{server_name}` before proxy startup"),
-                    error,
-                )
-            })?;
+        match provider {
+            Some(provider) => {
+                reload_server_with_provider(config_path, &server_name, provider).await
+            }
+            None => reload_server(config_path, &server_name).await,
+        }
+        .map_err(|error| {
+            operation_error(
+                "mcp.reload_all_toolsets.reload_server",
+                format!("failed to reload MCP server `{server_name}` before proxy startup"),
+                error,
+            )
+        })?;
     }
 
     Ok(())

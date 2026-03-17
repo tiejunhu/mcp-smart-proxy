@@ -24,6 +24,8 @@ pub struct Cli {
 pub enum Command {
     /// Add a stdio MCP server and refresh its cached tools.
     Add {
+        #[arg(long, value_enum)]
+        provider: Option<ProviderName>,
         name: String,
         #[arg(required = true, num_args = 1.., trailing_var_arg = true, allow_hyphen_values = true)]
         command: Vec<String>,
@@ -32,13 +34,24 @@ pub enum Command {
     List,
     /// Import MCP servers from another tool's config and refresh their cached tools.
     #[command(arg_required_else_help = true)]
-    Import { source: ImportSource },
+    Import {
+        #[arg(long, value_enum)]
+        provider: Option<ProviderName>,
+        source: ImportSource,
+    },
     /// Remove a configured MCP server and its cached tools.
     Remove { name: String },
     /// Refresh cached tool metadata for one configured MCP server, or all servers when omitted.
-    Reload { name: Option<String> },
+    Reload {
+        #[arg(long, value_enum)]
+        provider: Option<ProviderName>,
+        name: Option<String>,
+    },
     /// Start a stdio MCP server that exposes cached toolset activation.
-    Mcp,
+    Mcp {
+        #[arg(long, value_enum)]
+        provider: Option<ProviderName>,
+    },
     /// Update application configuration.
     Config {
         #[command(subcommand)]
@@ -50,6 +63,23 @@ pub enum Command {
 pub enum ImportSource {
     Codex,
     Opencode,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum ProviderName {
+    Openai,
+    Codex,
+    Opencode,
+}
+
+impl ProviderName {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Openai => "openai",
+            Self::Codex => "codex",
+            Self::Opencode => "opencode",
+        }
+    }
 }
 
 #[derive(Debug, Subcommand)]
@@ -94,7 +124,10 @@ mod tests {
         let cli = Cli::parse_from(["msp", "reload"]);
 
         match cli.command {
-            Some(Command::Reload { name }) => assert_eq!(name, None),
+            Some(Command::Reload { provider, name }) => {
+                assert_eq!(provider, None);
+                assert_eq!(name, None);
+            }
             other => panic!("expected reload command, got {other:?}"),
         }
     }
@@ -104,8 +137,83 @@ mod tests {
         let cli = Cli::parse_from(["msp", "reload", "github"]);
 
         match cli.command {
-            Some(Command::Reload { name }) => assert_eq!(name.as_deref(), Some("github")),
+            Some(Command::Reload { provider, name }) => {
+                assert_eq!(provider, None);
+                assert_eq!(name.as_deref(), Some("github"));
+            }
             other => panic!("expected reload command, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_add_with_provider_override() {
+        let cli = Cli::parse_from([
+            "msp",
+            "add",
+            "--provider",
+            "codex",
+            "github",
+            "npx",
+            "-y",
+            "@modelcontextprotocol/server-github",
+        ]);
+
+        match cli.command {
+            Some(Command::Add {
+                provider,
+                name,
+                command,
+            }) => {
+                assert!(matches!(provider, Some(ProviderName::Codex)));
+                assert_eq!(name, "github");
+                assert_eq!(
+                    command,
+                    vec![
+                        "npx".to_string(),
+                        "-y".to_string(),
+                        "@modelcontextprotocol/server-github".to_string(),
+                    ]
+                );
+            }
+            other => panic!("expected add command, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_import_with_provider_override() {
+        let cli = Cli::parse_from(["msp", "import", "--provider", "openai", "codex"]);
+
+        match cli.command {
+            Some(Command::Import { provider, source }) => {
+                assert!(matches!(provider, Some(ProviderName::Openai)));
+                assert!(matches!(source, ImportSource::Codex));
+            }
+            other => panic!("expected import command, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_reload_with_provider_override() {
+        let cli = Cli::parse_from(["msp", "reload", "--provider", "opencode", "github"]);
+
+        match cli.command {
+            Some(Command::Reload { provider, name }) => {
+                assert!(matches!(provider, Some(ProviderName::Opencode)));
+                assert_eq!(name.as_deref(), Some("github"));
+            }
+            other => panic!("expected reload command, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_mcp_with_provider_override() {
+        let cli = Cli::parse_from(["msp", "mcp", "--provider", "codex"]);
+
+        match cli.command {
+            Some(Command::Mcp { provider }) => {
+                assert!(matches!(provider, Some(ProviderName::Codex)));
+            }
+            other => panic!("expected mcp command, got {other:?}"),
         }
     }
 

@@ -7,8 +7,8 @@ use toml::{Table, Value};
 
 use crate::paths::{cache_file_path, expand_tilde, sanitize_name};
 use crate::types::{
-    CachedTools, CodexRuntimeConfig, ConfiguredServer, ModelProviderConfig,
-    OpenAiRuntimeConfig, OpencodeRuntimeConfig,
+    CachedTools, CodexRuntimeConfig, ConfiguredServer, ModelProviderConfig, OpenAiRuntimeConfig,
+    OpencodeRuntimeConfig,
 };
 
 const DEFAULT_MODEL: &str = "gpt-5.2";
@@ -94,6 +94,23 @@ pub fn add_server(
     name: &str,
     raw_command: Vec<String>,
 ) -> Result<String, Box<dyn Error>> {
+    save_server(config_path, name, raw_command, true)
+}
+
+pub fn import_server(
+    config_path: &Path,
+    name: &str,
+    raw_command: Vec<String>,
+) -> Result<String, Box<dyn Error>> {
+    save_server(config_path, name, raw_command, false)
+}
+
+fn save_server(
+    config_path: &Path,
+    name: &str,
+    raw_command: Vec<String>,
+    require_default_provider: bool,
+) -> Result<String, Box<dyn Error>> {
     let normalized = normalize_add_command(raw_command);
     if is_self_server_command(&normalized) {
         return Err("cannot add `msp mcp` as a managed server".into());
@@ -105,7 +122,9 @@ pub fn add_server(
     if name.is_empty() {
         return Err("server name must contain at least one ASCII letter or digit".into());
     }
-    load_default_model_provider_config(&config)?;
+    if require_default_provider {
+        load_default_model_provider_config(&config)?;
+    }
     if has_server_name(&config, &name) {
         return Err(format!("server `{name}` already exists").into());
     }
@@ -393,7 +412,8 @@ pub fn load_openai_runtime_config(config: &Table) -> Result<OpenAiRuntimeConfig,
 
     let baseurl = table_optional_string(table, "baseurl", Some(OPENAI_API_BASE_ENV));
     let key = openai_string(table, "key", Some(OPENAI_API_KEY_ENV))?;
-    let model = table_optional_string(table, "model", None).unwrap_or_else(|| DEFAULT_MODEL.to_string());
+    let model =
+        table_optional_string(table, "model", None).unwrap_or_else(|| DEFAULT_MODEL.to_string());
 
     Ok(OpenAiRuntimeConfig {
         baseurl,
@@ -404,7 +424,8 @@ pub fn load_openai_runtime_config(config: &Table) -> Result<OpenAiRuntimeConfig,
 
 pub fn load_codex_runtime_config(config: &Table) -> Result<CodexRuntimeConfig, Box<dyn Error>> {
     let table = config.get(CODEX_PROVIDER_NAME).and_then(Value::as_table);
-    let model = table_optional_string(table, "model", None).unwrap_or_else(|| DEFAULT_MODEL.to_string());
+    let model =
+        table_optional_string(table, "model", None).unwrap_or_else(|| DEFAULT_MODEL.to_string());
 
     Ok(CodexRuntimeConfig { model })
 }
@@ -430,6 +451,13 @@ pub fn load_default_model_provider_config(
             "missing `default_provider` in config; model-backed commands cannot run".to_string()
         })?;
 
+    load_model_provider_config(config, provider)
+}
+
+pub fn load_model_provider_config(
+    config: &Table,
+    provider: &str,
+) -> Result<ModelProviderConfig, Box<dyn Error>> {
     match provider {
         OPENAI_PROVIDER_NAME => load_openai_runtime_config(config).map(ModelProviderConfig::OpenAi),
         CODEX_PROVIDER_NAME => load_codex_runtime_config(config).map(ModelProviderConfig::Codex),
@@ -437,7 +465,7 @@ pub fn load_default_model_provider_config(
             load_opencode_runtime_config(config).map(ModelProviderConfig::Opencode)
         }
         _ => Err(format!(
-            "unsupported `default_provider` `{provider}`; supported providers are `openai`, `codex`, and `opencode`"
+            "unsupported provider `{provider}`; supported providers are `openai`, `codex`, and `opencode`"
         )
         .into()),
     }
@@ -604,16 +632,17 @@ fn load_opencode_servers_for_import_from_path(path: &Path) -> Result<ImportPlan,
             .and_then(serde_json::Value::as_array)
             .ok_or_else(|| format!("OpenCode MCP server `{name}` is missing `command`"))?;
         if command.is_empty() {
-            return Err(format!("OpenCode MCP server `{name}` has an empty `command` array").into());
+            return Err(
+                format!("OpenCode MCP server `{name}` has an empty `command` array").into(),
+            );
         }
 
         let raw_command = command
             .iter()
             .map(|value| {
-                value
-                    .as_str()
-                    .map(ToOwned::to_owned)
-                    .ok_or_else(|| format!("OpenCode MCP server `{name}` contains a non-string command part"))
+                value.as_str().map(ToOwned::to_owned).ok_or_else(|| {
+                    format!("OpenCode MCP server `{name}` contains a non-string command part")
+                })
             })
             .collect::<Result<Vec<_>, _>>()?;
 
@@ -1488,6 +1517,32 @@ mod tests {
     }
 
     #[test]
+    fn allows_import_when_default_provider_is_missing() {
+        let config_path = unique_test_path("import-without-default-provider.toml");
+
+        let server_name = import_server(
+            &config_path,
+            "ones",
+            vec!["https://ones.com/mcp".to_string()],
+        )
+        .unwrap();
+        let config = load_config_table(&config_path).unwrap();
+
+        assert_eq!(server_name, "ones");
+        assert_eq!(config["servers"]["ones"]["command"].as_str(), Some("npx"));
+        assert_eq!(
+            config["servers"]["ones"]["args"].as_array().unwrap(),
+            &vec![
+                Value::String("-y".to_string()),
+                Value::String("mcp-remote".to_string()),
+                Value::String("https://ones.com/mcp".to_string()),
+            ]
+        );
+
+        fs::remove_file(config_path).unwrap();
+    }
+
+    #[test]
     fn rejects_adding_self_as_server() {
         let config_path = unique_test_path("self-server-config.toml");
         update_codex_config(
@@ -1824,8 +1879,33 @@ mod tests {
 
             assert_eq!(
                 error.to_string(),
-                "unsupported `default_provider` `anthropic`; supported providers are `openai`, `codex`, and `opencode`"
+                "unsupported provider `anthropic`; supported providers are `openai`, `codex`, and `opencode`"
             );
+        });
+    }
+
+    #[test]
+    fn loads_explicit_provider_runtime_without_default_provider() {
+        with_openai_env(None, Some("sk-env"), || {
+            let config: Table = toml::from_str(
+                r#"
+                    [openai]
+                    model = "gpt-4.1-mini"
+                "#,
+            )
+            .unwrap();
+
+            let runtime = load_model_provider_config(&config, "openai").unwrap();
+
+            match runtime {
+                ModelProviderConfig::OpenAi(openai) => {
+                    assert_eq!(openai.model, "gpt-4.1-mini");
+                    assert_eq!(openai.key, "sk-env");
+                }
+                ModelProviderConfig::Codex(_) | ModelProviderConfig::Opencode(_) => {
+                    panic!("expected openai provider")
+                }
+            }
         });
     }
 
