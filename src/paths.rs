@@ -36,6 +36,21 @@ pub fn cache_file_path_from_home(
         .join(format!("{server_name}.json")))
 }
 
+pub fn sibling_backup_path(path: &Path, suffix: &str) -> PathBuf {
+    let parent = path.parent().unwrap_or_else(|| Path::new(""));
+    let stem = path
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .unwrap_or("config");
+
+    match path.extension().and_then(|value| value.to_str()) {
+        Some(extension) if !extension.is_empty() => {
+            parent.join(format!("{stem}.{suffix}.{extension}"))
+        }
+        _ => parent.join(format!("{stem}.{suffix}")),
+    }
+}
+
 pub fn sanitize_name(value: &str) -> String {
     let mut result = String::new();
     let mut previous_dash = false;
@@ -73,5 +88,14 @@ mod tests {
     #[test]
     fn sanitizes_server_name() {
         assert_eq!(sanitize_name("Ones MCP"), "ones-mcp");
+    }
+
+    #[test]
+    fn builds_sibling_backup_path_with_extension() {
+        let path = Path::new("/tmp/config.toml");
+
+        let backup_path = sibling_backup_path(path, "msp-backup");
+
+        assert_eq!(backup_path, PathBuf::from("/tmp/config.msp-backup.toml"));
     }
 }

@@ -299,6 +299,13 @@ Install into OpenCode:
 msp install opencode
 ```
 
+Replace existing target MCP servers after importing them into `msp`:
+
+```bash
+msp install codex --replace
+msp install opencode --replace
+```
+
 This command:
 
 1. reads the target config file for Codex or OpenCode
@@ -309,6 +316,20 @@ This command:
 
 `install codex` writes into `$CODEX_HOME/config.toml` or `~/.codex/config.toml`.
 `install opencode` writes into `~/.config/opencode/opencode.json`.
+
+With `--replace`, `install` performs four extra steps before the final install:
+
+1. runs the same import flow as `msp import codex` or `msp import opencode`
+2. merges every MCP server currently present in the target config into a backup file
+3. removes all MCP servers from the target config
+4. installs `msp mcp --provider codex` or `msp mcp --provider opencode`
+
+The backup files are:
+
+- Codex: `$CODEX_HOME/config.msp-backup.toml` or `~/.codex/config.msp-backup.toml`
+- OpenCode: `~/.config/opencode/opencode.msp-backup.json`
+
+If a backup file already exists, `--replace` updates it in place by server name so the backup stays deduplicated.
 
 ### List configured servers
 
@@ -433,6 +454,13 @@ Install into OpenCode:
 
 ```bash
 msp install opencode
+```
+
+Replace existing target MCP servers during install:
+
+```bash
+msp install codex --replace
+msp install opencode --replace
 ```
 
 ## Proxy Tool Contract

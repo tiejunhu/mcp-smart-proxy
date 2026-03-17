@@ -40,7 +40,12 @@ pub enum Command {
         source: ImportSource,
     },
     /// Install this proxy as an MCP server in another tool's config.
-    Install { target: InstallTarget },
+    Install {
+        /// Import target MCP servers into msp, back them up, remove them, then install msp.
+        #[arg(long)]
+        replace: bool,
+        target: InstallTarget,
+    },
     /// Remove a configured MCP server and its cached tools.
     Remove { name: String },
     /// Refresh cached tool metadata for one configured MCP server, or all servers when omitted.
@@ -205,8 +210,22 @@ mod tests {
         let cli = Cli::parse_from(["msp", "install", "codex"]);
 
         match cli.command {
-            Some(Command::Install { target }) => {
+            Some(Command::Install { replace, target }) => {
+                assert!(!replace);
                 assert!(matches!(target, InstallTarget::Codex));
+            }
+            other => panic!("expected install command, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_install_with_replace_flag() {
+        let cli = Cli::parse_from(["msp", "install", "opencode", "--replace"]);
+
+        match cli.command {
+            Some(Command::Install { replace, target }) => {
+                assert!(replace);
+                assert!(matches!(target, InstallTarget::Opencode));
             }
             other => panic!("expected install command, got {other:?}"),
         }

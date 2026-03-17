@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use serde_json::{Map as JsonMap, Value as JsonValue};
 use toml::{Table, Value};
 
-use crate::paths::{cache_file_path, expand_tilde, sanitize_name};
+use crate::paths::{cache_file_path, expand_tilde, sanitize_name, sibling_backup_path};
 use crate::types::{
     CachedTools, CodexRuntimeConfig, ConfiguredServer, ModelProviderConfig, OpenAiRuntimeConfig,
     OpencodeRuntimeConfig,
@@ -91,6 +91,14 @@ pub struct InstallMcpServerResult {
     pub name: String,
     pub config_path: PathBuf,
     pub status: InstallMcpServerStatus,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReplaceMcpServersResult {
+    pub config_path: PathBuf,
+    pub backup_path: PathBuf,
+    pub backed_up_server_count: usize,
+    pub removed_server_count: usize,
 }
 
 pub struct OpenAiConfigUpdate {
@@ -515,6 +523,16 @@ pub fn install_opencode_mcp_server() -> Result<InstallMcpServerResult, Box<dyn E
     })
 }
 
+pub fn replace_codex_mcp_servers() -> Result<ReplaceMcpServersResult, Box<dyn Error>> {
+    let config_path = codex_config_path()?;
+    replace_codex_mcp_servers_from_path(&config_path)
+}
+
+pub fn replace_opencode_mcp_servers() -> Result<ReplaceMcpServersResult, Box<dyn Error>> {
+    let config_path = opencode_config_path()?;
+    replace_opencode_mcp_servers_from_path(&config_path)
+}
+
 pub fn load_openai_runtime_config(config: &Table) -> Result<OpenAiRuntimeConfig, Box<dyn Error>> {
     let table = config.get("openai").and_then(Value::as_table);
 
@@ -626,6 +644,59 @@ fn codex_config_path() -> Result<PathBuf, Box<dyn Error>> {
 
 fn opencode_config_path() -> Result<PathBuf, Box<dyn Error>> {
     expand_tilde(Path::new(DEFAULT_OPENCODE_CONFIG_PATH))
+}
+
+fn replace_codex_mcp_servers_from_path(
+    config_path: &Path,
+) -> Result<ReplaceMcpServersResult, Box<dyn Error>> {
+    let mut config = load_config_table(config_path)?;
+    let existing_servers = match config.get("mcp_servers") {
+        None => Table::new(),
+        Some(Value::Table(servers)) => servers.clone(),
+        Some(_) => return Err("`mcp_servers` in Codex config must be a table".into()),
+    };
+    let backup_path = sibling_backup_path(config_path, "msp-backup");
+
+    merge_codex_servers_into_backup(&backup_path, &existing_servers)?;
+
+    if config.remove("mcp_servers").is_some() {
+        save_config_table(config_path, &config)?;
+    }
+
+    Ok(ReplaceMcpServersResult {
+        config_path: config_path.to_path_buf(),
+        backup_path,
+        backed_up_server_count: existing_servers.len(),
+        removed_server_count: existing_servers.len(),
+    })
+}
+
+fn replace_opencode_mcp_servers_from_path(
+    config_path: &Path,
+) -> Result<ReplaceMcpServersResult, Box<dyn Error>> {
+    let mut config = load_opencode_config(config_path)?;
+    let root = config
+        .as_object_mut()
+        .ok_or_else(|| "OpenCode config root must be a JSON object".to_string())?;
+    let existing_servers = match root.get("mcp") {
+        None => JsonMap::new(),
+        Some(JsonValue::Object(servers)) => servers.clone(),
+        Some(_) => return Err("`mcp` in OpenCode config must be an object".into()),
+    };
+    let backup_path = sibling_backup_path(config_path, "msp-backup");
+
+    merge_opencode_servers_into_backup(&backup_path, &existing_servers)?;
+
+    if root.remove("mcp").is_some() {
+        save_opencode_config(config_path, &config)?;
+    }
+
+    Ok(ReplaceMcpServersResult {
+        config_path: config_path.to_path_buf(),
+        backup_path,
+        backed_up_server_count: existing_servers.len(),
+        removed_server_count: existing_servers.len(),
+    })
 }
 
 fn load_codex_servers_for_import_from_path(path: &Path) -> Result<ImportPlan, Box<dyn Error>> {
@@ -978,6 +1049,49 @@ fn save_opencode_config(path: &Path, config: &JsonValue) -> Result<(), Box<dyn E
 
     let contents = serde_json::to_string_pretty(config)?;
     fs::write(path, contents)?;
+    Ok(())
+}
+
+fn merge_codex_servers_into_backup(
+    backup_path: &Path,
+    servers: &Table,
+) -> Result<(), Box<dyn Error>> {
+    let mut backup = load_config_table(backup_path)?;
+    let backup_servers_value = backup
+        .entry("mcp_servers")
+        .or_insert_with(|| Value::Table(Table::new()));
+    let backup_servers = backup_servers_value
+        .as_table_mut()
+        .ok_or_else(|| "`mcp_servers` in Codex backup must be a table".to_string())?;
+
+    for (name, server) in servers {
+        backup_servers.insert(name.clone(), server.clone());
+    }
+
+    save_config_table(backup_path, &backup)?;
+    Ok(())
+}
+
+fn merge_opencode_servers_into_backup(
+    backup_path: &Path,
+    servers: &JsonMap<String, JsonValue>,
+) -> Result<(), Box<dyn Error>> {
+    let mut backup = load_opencode_config(backup_path)?;
+    let root = backup
+        .as_object_mut()
+        .ok_or_else(|| "OpenCode backup root must be a JSON object".to_string())?;
+    let backup_servers_value = root
+        .entry("mcp".to_string())
+        .or_insert_with(|| JsonValue::Object(JsonMap::new()));
+    let backup_servers = backup_servers_value
+        .as_object_mut()
+        .ok_or_else(|| "`mcp` in OpenCode backup must be an object".to_string())?;
+
+    for (name, server) in servers {
+        backup_servers.insert(name.clone(), server.clone());
+    }
+
+    save_opencode_config(backup_path, &backup)?;
     Ok(())
 }
 
@@ -1342,6 +1456,58 @@ mod tests {
     }
 
     #[test]
+    fn replaces_codex_servers_after_merging_backup_without_duplicates() {
+        let config_path = unique_test_path("codex-replace.toml");
+        let backup_path = sibling_backup_path(&config_path, "msp-backup");
+        fs::write(
+            &config_path,
+            r#"
+                [mcp_servers.alpha]
+                command = "npx"
+                args = ["-y", "alpha-server"]
+
+                [mcp_servers.beta]
+                command = "uvx"
+                args = ["beta-server"]
+            "#,
+        )
+        .unwrap();
+        fs::write(
+            &backup_path,
+            r#"
+                [mcp_servers.beta]
+                command = "old"
+                args = ["beta-old"]
+
+                [mcp_servers.gamma]
+                command = "npx"
+                args = ["-y", "gamma-server"]
+            "#,
+        )
+        .unwrap();
+
+        let replaced = replace_codex_mcp_servers_from_path(&config_path).unwrap();
+
+        assert_eq!(replaced.config_path, config_path);
+        assert_eq!(replaced.backup_path, backup_path);
+        assert_eq!(replaced.backed_up_server_count, 2);
+        assert_eq!(replaced.removed_server_count, 2);
+
+        let config = load_config_table(&config_path).unwrap();
+        assert!(config.get("mcp_servers").is_none());
+
+        let backup = load_config_table(&backup_path).unwrap();
+        let backup_servers = backup["mcp_servers"].as_table().unwrap();
+        assert_eq!(backup_servers.len(), 3);
+        assert_eq!(backup_servers["alpha"]["command"].as_str(), Some("npx"));
+        assert_eq!(backup_servers["beta"]["command"].as_str(), Some("uvx"));
+        assert_eq!(backup_servers["gamma"]["command"].as_str(), Some("npx"));
+
+        fs::remove_file(config_path).unwrap();
+        fs::remove_file(backup_path).unwrap();
+    }
+
+    #[test]
     fn recognizes_existing_opencode_self_server_with_matching_provider() {
         let home = unique_test_path("opencode-existing-home");
         fs::create_dir_all(home.join(".config/opencode")).unwrap();
@@ -1367,6 +1533,77 @@ mod tests {
         });
 
         fs::remove_dir_all(home).unwrap();
+    }
+
+    #[test]
+    fn replaces_opencode_servers_after_merging_backup_without_duplicates() {
+        let config_path = unique_test_path("opencode-replace.json");
+        let backup_path = sibling_backup_path(&config_path, "msp-backup");
+        fs::write(
+            &config_path,
+            r#"{
+                "mcp": {
+                    "alpha": {
+                        "type": "local",
+                        "command": ["npx", "-y", "alpha-server"]
+                    },
+                    "beta": {
+                        "type": "local",
+                        "command": ["uvx", "beta-server"]
+                    }
+                }
+            }"#,
+        )
+        .unwrap();
+        fs::write(
+            &backup_path,
+            r#"{
+                "mcp": {
+                    "beta": {
+                        "type": "local",
+                        "command": ["old", "beta-old"]
+                    },
+                    "gamma": {
+                        "type": "local",
+                        "command": ["npx", "-y", "gamma-server"]
+                    }
+                }
+            }"#,
+        )
+        .unwrap();
+
+        let replaced = replace_opencode_mcp_servers_from_path(&config_path).unwrap();
+
+        assert_eq!(replaced.config_path, config_path);
+        assert_eq!(replaced.backup_path, backup_path);
+        assert_eq!(replaced.backed_up_server_count, 2);
+        assert_eq!(replaced.removed_server_count, 2);
+
+        let config = load_opencode_config(&config_path).unwrap();
+        assert!(config.get("mcp").is_none());
+
+        let backup = load_opencode_config(&backup_path).unwrap();
+        let backup_servers = backup["mcp"].as_object().unwrap();
+        assert_eq!(backup_servers.len(), 3);
+        assert_eq!(
+            backup_servers["alpha"]["command"].as_array().unwrap(),
+            &vec![
+                JsonValue::String("npx".to_string()),
+                JsonValue::String("-y".to_string()),
+                JsonValue::String("alpha-server".to_string()),
+            ]
+        );
+        assert_eq!(
+            backup_servers["beta"]["command"].as_array().unwrap(),
+            &vec![
+                JsonValue::String("uvx".to_string()),
+                JsonValue::String("beta-server".to_string()),
+            ]
+        );
+        assert!(backup_servers.get("gamma").is_some());
+
+        fs::remove_file(config_path).unwrap();
+        fs::remove_file(backup_path).unwrap();
     }
 
     #[test]

@@ -13,12 +13,14 @@ mod types;
 
 use cli::{Cli, Command, ConfigCommand, ImportSource, InstallTarget, ProviderName};
 use config::{
-    CodexConfigUpdate, InstallMcpServerResult, InstallMcpServerStatus, OpenAiConfigUpdate,
-    OpencodeConfigUpdate, add_server, contains_server_name, import_server,
-    install_codex_mcp_server, install_opencode_mcp_server, list_servers,
-    load_codex_servers_for_import, load_config_table, load_default_model_provider_config,
-    load_model_provider_config, load_opencode_servers_for_import, remove_server,
-    update_codex_config, update_openai_config, update_opencode_config,
+    CodexConfigUpdate, ImportPlan, InstallMcpServerResult, InstallMcpServerStatus,
+    OpenAiConfigUpdate, OpencodeConfigUpdate, ReplaceMcpServersResult, add_server,
+    contains_server_name, import_server, install_codex_mcp_server, install_opencode_mcp_server,
+    list_servers, load_codex_servers_for_import, load_config_table,
+    load_default_model_provider_config, load_model_provider_config,
+    load_opencode_servers_for_import, remove_server, replace_codex_mcp_servers,
+    replace_opencode_mcp_servers, update_codex_config, update_openai_config,
+    update_opencode_config,
 };
 use console::{describe_command, operation_error, print_app_error, print_app_event};
 use paths::expand_tilde;
@@ -334,28 +336,56 @@ async fn run() -> Result<(), Box<dyn Error>> {
             }
         }
         Some(Command::Install {
+            replace,
             target: InstallTarget::Codex,
         }) => {
-            let installed = install_codex_mcp_server().map_err(|error| {
-                operation_error(
+            if replace {
+                install_with_replace(
+                    &config_path,
+                    ImportSource::Codex,
+                    load_codex_servers_for_import,
+                    replace_codex_mcp_servers,
+                    install_codex_mcp_server,
                     "cli.install.codex",
-                    "failed to install msp into Codex config",
-                    error,
+                    "codex",
                 )
-            })?;
-            print_install_result("cli.install.codex", "codex", &installed);
+                .await?;
+            } else {
+                let installed = install_codex_mcp_server().map_err(|error| {
+                    operation_error(
+                        "cli.install.codex",
+                        "failed to install msp into Codex config",
+                        error,
+                    )
+                })?;
+                print_install_result("cli.install.codex", "codex", &installed);
+            }
         }
         Some(Command::Install {
+            replace,
             target: InstallTarget::Opencode,
         }) => {
-            let installed = install_opencode_mcp_server().map_err(|error| {
-                operation_error(
+            if replace {
+                install_with_replace(
+                    &config_path,
+                    ImportSource::Opencode,
+                    load_opencode_servers_for_import,
+                    replace_opencode_mcp_servers,
+                    install_opencode_mcp_server,
                     "cli.install.opencode",
-                    "failed to install msp into OpenCode config",
-                    error,
+                    "opencode",
                 )
-            })?;
-            print_install_result("cli.install.opencode", "opencode", &installed);
+                .await?;
+            } else {
+                let installed = install_opencode_mcp_server().map_err(|error| {
+                    operation_error(
+                        "cli.install.opencode",
+                        "failed to install msp into OpenCode config",
+                        error,
+                    )
+                })?;
+                print_install_result("cli.install.opencode", "opencode", &installed);
+            }
         }
         Some(Command::Remove { name }) => {
             let removed = remove_server(&config_path, &name).map_err(|error| {
@@ -659,6 +689,138 @@ async fn run() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+async fn install_with_replace(
+    config_path: &std::path::Path,
+    source: ImportSource,
+    load_import_plan: fn() -> Result<(std::path::PathBuf, ImportPlan), Box<dyn Error>>,
+    replace_target_servers: fn() -> Result<ReplaceMcpServersResult, Box<dyn Error>>,
+    install_target_server: fn() -> Result<InstallMcpServerResult, Box<dyn Error>>,
+    install_stage: &'static str,
+    provider_name: &'static str,
+) -> Result<(), Box<dyn Error>> {
+    let mut config = load_config_table(config_path).map_err(|error| {
+        operation_error(
+            "cli.install.replace.load_config",
+            format!("failed to load config from {}", config_path.display()),
+            error,
+        )
+    })?;
+    let provider = resolve_import_provider(&config, None, source).map_err(|error| {
+        operation_error(
+            "cli.install.replace.load_provider",
+            format!(
+                "failed to load the provider configuration before importing into {}",
+                config_path.display()
+            ),
+            error,
+        )
+    })?;
+    let (source_config_path, import_plan) = load_import_plan().map_err(|error| {
+        operation_error(
+            "cli.install.replace.load_source",
+            format!(
+                "failed to load importable MCP servers from {}",
+                provider_name
+            ),
+            error,
+        )
+    })?;
+
+    let import_stage = format!("{install_stage}.replace.import");
+    let mut imported_servers = Vec::new();
+    let mut skipped_existing_servers = Vec::new();
+
+    for server in import_plan.servers {
+        if contains_server_name(&config, &server.name) {
+            skipped_existing_servers.push(server.name);
+            continue;
+        }
+
+        let server_name =
+            import_server(config_path, &server.name, server.command).map_err(|error| {
+                operation_error(
+                    "cli.install.replace.import",
+                    format!(
+                        "failed to import MCP server `{}` from {} into {}",
+                        server.name,
+                        source_config_path.display(),
+                        config_path.display()
+                    ),
+                    error,
+                )
+            })?;
+        let reload_result = reload_server_with_provider(config_path, &server_name, &provider)
+            .await
+            .map_err(|error| {
+                operation_error(
+                    "cli.install.replace.reload",
+                    format!(
+                        "failed to reload imported MCP server `{server_name}` from {}",
+                        source_config_path.display()
+                    ),
+                    error,
+                )
+            })?;
+        imported_servers.push(format!(
+            "Imported `{server_name}` and cached tools at {}",
+            reload_result.cache_path.display()
+        ));
+        config = load_config_table(config_path).map_err(|error| {
+            operation_error(
+                "cli.install.replace.refresh_config",
+                format!("failed to refresh config from {}", config_path.display()),
+                error,
+            )
+        })?;
+    }
+
+    print_app_event(
+        &import_stage,
+        format!(
+            "Imported {} MCP server(s) from {} into {} before replacing {} MCP config",
+            imported_servers.len(),
+            source_config_path.display(),
+            config_path.display(),
+            provider_name
+        ),
+    );
+    for message in imported_servers {
+        print_app_event(&format!("{import_stage}.server"), message);
+    }
+    for name in skipped_existing_servers {
+        print_app_event(
+            &format!("{import_stage}.skipped"),
+            format!("Skipped existing server `{name}`"),
+        );
+    }
+    for name in import_plan.skipped_self_servers {
+        print_app_event(
+            &format!("{import_stage}.skipped"),
+            format!("Skipped self-referential server `{name}`"),
+        );
+    }
+
+    let replaced = replace_target_servers().map_err(|error| {
+        operation_error(
+            "cli.install.replace.backup",
+            format!("failed to back up and clear {provider_name} MCP servers"),
+            error,
+        )
+    })?;
+    print_replace_result(&format!("{install_stage}.replace.backup"), &replaced);
+
+    let installed = install_target_server().map_err(|error| {
+        operation_error(
+            install_stage,
+            format!("failed to install msp into {} config", provider_name),
+            error,
+        )
+    })?;
+    print_install_result(install_stage, provider_name, &installed);
+
+    Ok(())
+}
+
 fn format_last_updated(epoch_ms: Option<u128>) -> String {
     epoch_ms
         .and_then(format_local_timestamp)
@@ -718,6 +880,18 @@ fn print_install_result(stage: &str, provider: &str, installed: &InstallMcpServe
             installed.config_path.display()
         ),
     };
+
+    print_app_event(stage, message);
+}
+
+fn print_replace_result(stage: &str, replaced: &ReplaceMcpServersResult) {
+    let message = format!(
+        "Backed up {} MCP server(s) from {} to {} and removed {} MCP server(s) before install",
+        replaced.backed_up_server_count,
+        replaced.config_path.display(),
+        replaced.backup_path.display(),
+        replaced.removed_server_count,
+    );
 
     print_app_event(stage, message);
 }
