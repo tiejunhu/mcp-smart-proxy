@@ -27,13 +27,23 @@ pub fn cache_file_path(server_name: &str) -> Result<PathBuf, Box<dyn Error>> {
     cache_file_path_from_home(&home_dir()?, server_name)
 }
 
+pub fn cache_dir_path_from_home(home: &Path) -> Result<PathBuf, Box<dyn Error>> {
+    Ok(home.join(".cache/mcp-smart-proxy"))
+}
+
 pub fn cache_file_path_from_home(
     home: &Path,
     server_name: &str,
 ) -> Result<PathBuf, Box<dyn Error>> {
-    Ok(home
-        .join(".cache/mcp-smart-proxy")
-        .join(format!("{server_name}.json")))
+    Ok(cache_dir_path_from_home(home)?.join(format!("{server_name}.json")))
+}
+
+pub fn version_check_record_path() -> Result<PathBuf, Box<dyn Error>> {
+    version_check_record_path_from_home(&home_dir()?)
+}
+
+pub fn version_check_record_path_from_home(home: &Path) -> Result<PathBuf, Box<dyn Error>> {
+    Ok(cache_dir_path_from_home(home)?.join("version-update.json"))
 }
 
 pub fn sibling_backup_path(path: &Path, suffix: &str) -> PathBuf {
@@ -97,5 +107,14 @@ mod tests {
         let backup_path = sibling_backup_path(path, "msp-backup");
 
         assert_eq!(backup_path, PathBuf::from("/tmp/config.msp-backup.toml"));
+    }
+
+    #[test]
+    fn builds_cache_dir_path_under_default_cache_dir() {
+        let home = PathBuf::from("/tmp/example-home");
+
+        let path = cache_dir_path_from_home(&home).unwrap();
+
+        assert_eq!(path, home.join(".cache/mcp-smart-proxy"));
     }
 }

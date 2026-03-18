@@ -69,6 +69,7 @@ msp add --provider codex <mcp server name> <command>
 `msp` writes structured console output so another AI or operator can distinguish application events from external command output without making humans read raw log blobs.
 
 - Application success output is a single line in the form `[MSP][INFO][stage] message`.
+- Application warnings are a single line on stderr in the form `[MSP][WARN][stage] message`.
 - Application failure output is printed as a short error block with the stage, summary, and numbered causes.
 - Successful external commands stay silent.
 - Failed external commands emit `=== MSP EXTERNAL COMMAND FAILURE BEGIN ===` and `=== MSP EXTERNAL COMMAND FAILURE END ===`.
@@ -78,6 +79,12 @@ Example success output:
 
 ```text
 [MSP][INFO][cli.reload] Reloaded MCP server `github`. Cache file: /Users/example/.cache/mcp-smart-proxy/github.json
+```
+
+Example warning output:
+
+```text
+[MSP][WARN][startup.version_check] A newer msp release is available: v0.0.16 (current: v0.0.15). See https://github.com/tiejunhu/mcp-smart-proxy/releases
 ```
 
 Example failure output:
@@ -357,6 +364,12 @@ Before exposing the proxy stdio MCP server upstream, this command automatically 
 That startup reload resolves the summary provider from the required `--provider`.
 
 Only after that reload phase succeeds does the proxy start over stdio and load the refreshed cached toolsets. If any server fails to reload, the proxy does not report ready upstream.
+
+While `msp mcp` is running, it checks GitHub for a newer release every 30 minutes and stores the result in `~/.cache/mcp-smart-proxy/version-update.json`.
+
+If a newer release exists, `msp mcp` writes or updates that file. If the current binary is already up to date, `msp mcp` deletes the file.
+
+All other `msp` commands only read that cached record on startup. If the file says a newer version is available, they print a single warning line to stderr so normal stdout output and stdio MCP traffic stay untouched.
 
 ## Typical Workflow
 

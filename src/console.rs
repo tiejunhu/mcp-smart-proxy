@@ -131,6 +131,10 @@ pub fn print_app_event(stage: &str, message: impl AsRef<str>) {
     println!("{}", format_app_event_line(stage, message.as_ref()));
 }
 
+pub fn print_app_warning(stage: &str, message: impl AsRef<str>) {
+    eprintln!("{}", format_app_warning_line(stage, message.as_ref()));
+}
+
 pub fn print_app_error(error: &(dyn Error + 'static)) {
     let context = deepest_operation_error(error);
     let stage = context.map(OperationError::stage).unwrap_or("unknown");
@@ -254,6 +258,14 @@ fn format_app_event_line(stage: &str, message: &str) -> String {
     )
 }
 
+fn format_app_warning_line(stage: &str, message: &str) -> String {
+    format!(
+        "[MSP][WARN][{}] {}",
+        render_inline_value(stage),
+        render_inline_value(message)
+    )
+}
+
 fn format_app_error_line(stage: &str, summary: &str, chain: &[String]) -> String {
     let mut lines = vec![
         APP_ERROR_BEGIN.to_string(),
@@ -326,6 +338,14 @@ mod tests {
         assert_eq!(
             format_app_event_line("cli.config.codex", "Updated config"),
             "[MSP][INFO][cli.config.codex] Updated config"
+        );
+    }
+
+    #[test]
+    fn formats_app_warning_as_single_line() {
+        assert_eq!(
+            format_app_warning_line("startup.version_check", "New version available"),
+            "[MSP][WARN][startup.version_check] New version available"
         );
     }
 

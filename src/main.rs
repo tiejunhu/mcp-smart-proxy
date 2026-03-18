@@ -10,6 +10,7 @@ mod mcp_server;
 mod paths;
 mod reload;
 mod types;
+mod version_check;
 
 use cli::{Cli, Command, ImportSource, InstallTarget, ProviderName};
 use config::{
@@ -35,6 +36,11 @@ async fn main() {
 
 async fn run() -> Result<(), Box<dyn Error>> {
     let cli = Cli::parse();
+    if matches!(&cli.command, Some(Command::Mcp { .. })) {
+        version_check::spawn_periodic_version_check_record_refresh();
+    } else {
+        version_check::print_cached_update_notice();
+    }
     let config_path = expand_tilde(&cli.config).map_err(|error| {
         operation_error("cli.config_path", "failed to resolve config path", error)
     })?;
