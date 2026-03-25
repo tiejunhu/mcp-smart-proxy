@@ -9,7 +9,7 @@ use std::sync::Arc;
 use rmcp::{
     ErrorData as McpError, RoleClient, ServerHandler, ServiceExt,
     model::{
-        CallToolRequestMethod, CallToolRequestParams, CallToolResult, ListToolsResult,
+        CallToolRequestMethod, CallToolRequestParams, CallToolResult, Content, ListToolsResult,
         PaginatedRequestParams, ServerCapabilities, ServerInfo, Tool, object,
     },
     service::{ClientInitializeError, RequestContext, RunningService, ServiceError},
@@ -30,6 +30,7 @@ use crate::reload::{reload_server, reload_server_with_provider};
 use crate::types::{CachedTools, ConfiguredServer, ModelProviderConfig, ToolSnapshot};
 
 const ACTIVATE_EXTERNAL_MCP_NAME: &str = "activate_external_mcp";
+const ACTIVATE_EXTERNAL_MCP_TOOL_NAME: &str = "activate_external_mcp_tool";
 const CALL_TOOL_IN_EXTERNAL_MCP_NAME: &str = "call_tool_in_external_mcp";
 
 #[derive(Debug, Clone)]
@@ -51,6 +52,12 @@ struct ToolsetClient {
 #[derive(Debug, Deserialize)]
 struct ActivateExternalMcpRequest {
     external_mcp_name: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct ActivateExternalMcpToolRequest {
+    external_mcp_name: String,
+    tool_name: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -245,6 +252,28 @@ fn call_tool_in_external_mcp_definition(name: &'static str) -> Tool {
     )
 }
 
+fn activate_external_mcp_tool_definition() -> Tool {
+    Tool::new(
+        ACTIVATE_EXTERNAL_MCP_TOOL_NAME,
+        "Return the full definition of one tool exposed by an external MCP server, use this tool before calling call_tool_in_external_mcp",
+        object(json!({
+            "type": "object",
+            "properties": {
+                "external_mcp_name": {
+                    "type": "string",
+                    "description": "The external MCP server name."
+                },
+                "tool_name": {
+                    "type": "string",
+                    "description": "The tool name exposed by that external MCP server."
+                }
+            },
+            "required": ["external_mcp_name", "tool_name"],
+            "additionalProperties": false
+        })),
+    )
+}
+
 fn resolve_toolset_name<'a>(
     toolsets: &'a [CachedToolsetRecord],
     requested_name: &str,
@@ -258,9 +287,51 @@ fn resolve_toolset_name<'a>(
         })
 }
 
+fn resolve_tool_snapshot<'a>(
+    toolset: &'a CachedToolsetRecord,
+    tool_name: &str,
+) -> Option<&'a ToolSnapshot> {
+    toolset.tools.iter().find(|tool| tool.name == tool_name)
+}
+
+fn tool_description_preview(tool: &ToolSnapshot) -> String {
+    const MAX_DESCRIPTION_CHARS: usize = 80;
+    const ELLIPSIS: &str = "...";
+
+    let description = tool.description.as_deref().unwrap_or_default();
+    let char_count = description.chars().count();
+    if char_count <= MAX_DESCRIPTION_CHARS {
+        return description.to_string();
+    }
+
+    let preview_len = MAX_DESCRIPTION_CHARS.saturating_sub(ELLIPSIS.chars().count());
+    let mut preview = description.chars().take(preview_len).collect::<String>();
+    preview.push_str(ELLIPSIS);
+    preview
+}
+
+fn format_activate_tool_line(tool: &ToolSnapshot) -> String {
+    let description = tool_description_preview(tool);
+    if description.is_empty() {
+        tool.name.clone()
+    } else {
+        format!("{}: {}", tool.name, description)
+    }
+}
+
 fn build_activate_tool_result(toolset: &CachedToolsetRecord) -> CallToolResult {
+    let content = toolset
+        .tools
+        .iter()
+        .map(format_activate_tool_line)
+        .collect::<Vec<_>>()
+        .join("\n");
+    CallToolResult::success(vec![Content::text(content)])
+}
+
+fn build_activate_tool_detail_result(tool: &ToolSnapshot) -> CallToolResult {
     CallToolResult::structured(json!({
-        "tools": toolset.tools,
+        "tool": tool,
     }))
 }
 
@@ -358,6 +429,7 @@ async fn connect_toolset_client(server: &ConfiguredServer) -> Result<ToolsetClie
 
 struct SmartProxyMcpServer {
     activate_tool: Tool,
+    activate_tool_detail: Tool,
     call_tool_in_external_mcp: Tool,
     toolsets: Vec<CachedToolsetRecord>,
     clients: Mutex<HashMap<String, ToolsetClient>>,
@@ -366,10 +438,12 @@ struct SmartProxyMcpServer {
 impl SmartProxyMcpServer {
     fn new(toolsets: Vec<CachedToolsetRecord>) -> Self {
         let activate_tool = activate_tool_definition(&toolsets);
+        let activate_tool_detail = activate_external_mcp_tool_definition();
         let call_tool_in_external_mcp =
             call_tool_in_external_mcp_definition(CALL_TOOL_IN_EXTERNAL_MCP_NAME);
         Self {
             activate_tool,
+            activate_tool_detail,
             call_tool_in_external_mcp,
             toolsets,
             clients: Mutex::new(HashMap::new()),
@@ -399,7 +473,7 @@ impl ServerHandler for SmartProxyMcpServer {
     fn get_info(&self) -> ServerInfo {
         ServerInfo {
             instructions: Some(
-                "Use `activate_external_mcp` to inspect cached tools, then `call_tool_in_external_mcp` or `call_safe_tool_in_external_mcp` to invoke a specific downstream MCP tool."
+                "Use `activate_external_mcp` to inspect cached tool names, `activate_external_mcp_tool` to inspect one full cached tool definition, then `call_tool_in_external_mcp` to invoke a specific downstream MCP tool."
                     .into(),
             ),
             capabilities: ServerCapabilities::builder().enable_tools().build(),
@@ -415,6 +489,7 @@ impl ServerHandler for SmartProxyMcpServer {
         std::future::ready(Ok(ListToolsResult {
             tools: vec![
                 self.activate_tool.clone(),
+                self.activate_tool_detail.clone(),
                 self.call_tool_in_external_mcp.clone(),
             ],
             ..Default::default()
@@ -424,6 +499,7 @@ impl ServerHandler for SmartProxyMcpServer {
     fn get_tool(&self, name: &str) -> Option<Tool> {
         match name {
             ACTIVATE_EXTERNAL_MCP_NAME => Some(self.activate_tool.clone()),
+            ACTIVATE_EXTERNAL_MCP_TOOL_NAME => Some(self.activate_tool_detail.clone()),
             CALL_TOOL_IN_EXTERNAL_MCP_NAME => Some(self.call_tool_in_external_mcp.clone()),
             _ => None,
         }
@@ -465,6 +541,48 @@ impl ServerHandler for SmartProxyMcpServer {
                     };
 
                     Ok(build_activate_tool_result(toolset))
+                }
+                ACTIVATE_EXTERNAL_MCP_TOOL_NAME => {
+                    let params: ActivateExternalMcpToolRequest =
+                        serde_json::from_value(JsonValue::Object(arguments)).map_err(|error| {
+                            McpError::invalid_params(
+                                format!("invalid activate_external_mcp_tool arguments: {error}"),
+                                None,
+                            )
+                        })?;
+
+                    let Some(toolset) =
+                        resolve_toolset_name(&self.toolsets, &params.external_mcp_name)
+                    else {
+                        return Err(McpError::invalid_params(
+                            format!("unknown external MCP server `{}`", params.external_mcp_name),
+                            Some(json!({
+                                "available_external_mcps": self
+                                    .toolsets
+                                    .iter()
+                                    .map(|toolset| toolset.name.clone())
+                                    .collect::<Vec<_>>()
+                            })),
+                        ));
+                    };
+
+                    let Some(tool) = resolve_tool_snapshot(toolset, &params.tool_name) else {
+                        return Err(McpError::invalid_params(
+                            format!(
+                                "unknown tool `{}` in external MCP server `{}`",
+                                params.tool_name, toolset.name
+                            ),
+                            Some(json!({
+                                "available_tools": toolset
+                                    .tools
+                                    .iter()
+                                    .map(|tool| tool.name.clone())
+                                    .collect::<Vec<_>>()
+                            })),
+                        ));
+                    };
+
+                    Ok(build_activate_tool_detail_result(tool))
                 }
                 CALL_TOOL_IN_EXTERNAL_MCP_NAME => {
                     let params: CallToolInExternalMcpRequest =
@@ -706,10 +824,106 @@ mod tests {
 
         let result = build_activate_tool_result(&toolset);
 
+        assert_eq!(result.structured_content, None);
+        assert_eq!(result.content.len(), 1);
+        assert_eq!(
+            result.content[0].as_text().unwrap().text,
+            "search: Search things"
+        );
+    }
+
+    #[test]
+    fn activate_tool_truncates_tool_description_to_80_characters_with_ellipsis() {
+        let toolset = CachedToolsetRecord {
+            name: "alpha".to_string(),
+            summary: "Use Alpha.".to_string(),
+            server: ConfiguredServer {
+                command: "uvx".to_string(),
+                args: vec!["alpha".to_string()],
+                ..Default::default()
+            },
+            tools: vec![ToolSnapshot {
+                name: "search".to_string(),
+                title: Some("Search".to_string()),
+                description: Some(
+                    "12345678901234567890123456789012345678901234567890123456789012345678901234567890EXTRA"
+                        .to_string(),
+                ),
+                input_schema: json!({
+                    "type": "object"
+                }),
+                output_schema: None,
+                annotations: None,
+                execution: None,
+                icons: None,
+                meta: None,
+            }],
+        };
+
+        let result = build_activate_tool_result(&toolset);
+
+        assert_eq!(result.structured_content, None);
+        assert_eq!(result.content.len(), 1);
+        assert_eq!(
+            result.content[0].as_text().unwrap().text,
+            "search: 12345678901234567890123456789012345678901234567890123456789012345678901234567..."
+        );
+    }
+
+    #[test]
+    fn activate_tool_returns_name_only_when_description_is_missing() {
+        let toolset = CachedToolsetRecord {
+            name: "alpha".to_string(),
+            summary: "Use Alpha.".to_string(),
+            server: ConfiguredServer {
+                command: "uvx".to_string(),
+                args: vec!["alpha".to_string()],
+                ..Default::default()
+            },
+            tools: vec![ToolSnapshot {
+                name: "search".to_string(),
+                title: Some("Search".to_string()),
+                description: None,
+                input_schema: json!({
+                    "type": "object"
+                }),
+                output_schema: None,
+                annotations: None,
+                execution: None,
+                icons: None,
+                meta: None,
+            }],
+        };
+
+        let result = build_activate_tool_result(&toolset);
+
+        assert_eq!(result.structured_content, None);
+        assert_eq!(result.content.len(), 1);
+        assert_eq!(result.content[0].as_text().unwrap().text, "search");
+    }
+
+    #[test]
+    fn activate_tool_detail_returns_full_tool_definition() {
+        let tool = ToolSnapshot {
+            name: "search".to_string(),
+            title: Some("Search".to_string()),
+            description: Some("Search things".to_string()),
+            input_schema: json!({
+                "type": "object"
+            }),
+            output_schema: None,
+            annotations: None,
+            execution: None,
+            icons: None,
+            meta: None,
+        };
+
+        let result = build_activate_tool_detail_result(&tool);
+
         assert_eq!(
             result.structured_content,
             Some(json!({
-                "tools": [{
+                "tool": {
                     "name": "search",
                     "title": "Search",
                     "description": "Search things",
@@ -721,7 +935,7 @@ mod tests {
                     "execution": null,
                     "icons": null,
                     "meta": null
-                }]
+                }
             }))
         );
     }

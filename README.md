@@ -15,11 +15,11 @@ It does simple things:
 
 The proxy server currently exposes three tools:
 
-- `activate_external_mcp`: the description of this tool contains all the MCP servers' name and the one-sentence summary of each one's toolset. Calling this tool with MCP server name as argument returns the list of tools from that downstream MCP server.
+- `activate_external_mcp`: the description of this tool contains all the MCP servers' name and the one-sentence summary of each one's toolset. Calling this tool with MCP server name as argument returns a plain-text list of downstream tool names and description previews.
+- `activate_external_mcp_tool`: returns the full cached definition for one downstream tool by MCP server name and tool name.
 - `call_tool_in_external_mcp`: calls one downstream tool by external MCP server name and tool name.
-- `call_safe_tool_in_external_mcp`: an alias of `call_tool_in_external_mcp` with the same arguments and behavior.
 
-Your Agents see only these three tools. When they want to use a tool from a MCP server, they call `activate_external_mcp` to see the list of tools. Then they can call a specific tool with `call_tool_in_external_mcp` or `call_safe_tool_in_external_mcp`.
+Your Agents see only these three tools. When they want to use a tool from a MCP server, they call `activate_external_mcp` to see the cached tool index, optionally call `activate_external_mcp_tool` to inspect one full tool definition, and then call a specific tool with `call_tool_in_external_mcp`.
 
 ## Requirements
 
@@ -473,16 +473,36 @@ Input:
 
 Output:
 
+```text
+example_tool: Example description
+another_tool: Another description that is longer but still fits in the preview
+```
+
+Each line is `tool_name: description-preview`.
+If a tool has no description, the line is just `tool_name`.
+The description preview is at most 80 characters total. If it is truncated, the preview ends with `...`.
+
+### `activate_external_mcp_tool`
+
+Input:
+
 ```json
 {
-  "tools": [
-    {
-      "name": "example_tool",
-      "title": "Example Tool",
-      "description": "Example description",
-      "input_schema": {}
-    }
-  ]
+  "external_mcp_name": "github",
+  "tool_name": "example_tool"
+}
+```
+
+Output:
+
+```json
+{
+  "tool": {
+    "name": "example_tool",
+    "title": "Example Tool",
+    "description": "Example description",
+    "input_schema": {}
+  }
 }
 ```
 
@@ -499,20 +519,6 @@ Input:
 ```
 
 `args_in_json` must decode to a JSON object or `null`.
-
-### `call_safe_tool_in_external_mcp`
-
-Input:
-
-```json
-{
-  "external_mcp_name": "github",
-  "tool_name": "example_tool",
-  "args_in_json": "{\"owner\":\"octo-org\",\"repo\":\"demo\"}"
-}
-```
-
-`call_safe_tool_in_external_mcp` is an alias of `call_tool_in_external_mcp`. `args_in_json` must decode to a JSON object or `null`.
 
 ## Limitations
 
