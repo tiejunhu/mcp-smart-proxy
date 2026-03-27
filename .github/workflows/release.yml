@@ -11,7 +11,7 @@ permissions:
 
 env:
   BINARY_NAME: msp
-  HOMEBREW_TAP_REPOSITORY: tiejunhu/homebrew-mcp-smart-proxy
+  HOMEBREW_TAP_REPOSITORY: cybershape/homebrew-mcp-smart-proxy
   CARGO_TERM_COLOR: always
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 

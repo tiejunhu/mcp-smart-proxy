@@ -12,8 +12,8 @@ use crate::paths::unix_epoch_ms;
 use crate::paths::version_check_record_path;
 use crate::paths::version_check_record_path_from_home;
 
-const RELEASES_LATEST_URL: &str = "https://github.com/tiejunhu/mcp-smart-proxy/releases/latest";
-const RELEASES_PAGE_URL: &str = "https://github.com/tiejunhu/mcp-smart-proxy/releases";
+const RELEASES_LATEST_URL: &str = "https://github.com/cybershape/mcp-smart-proxy/releases/latest";
+const RELEASES_PAGE_URL: &str = "https://github.com/cybershape/mcp-smart-proxy/releases";
 const VERSION_CHECK_STAGE: &str = "startup.version_check";
 const VERSION_CHECK_INTERVAL: Duration = Duration::from_secs(30 * 60);
 
@@ -145,7 +145,7 @@ fn parse_release_version_from_url(url: &Url) -> Option<String> {
         segments.next(),
         segments.next(),
     ) {
-        (Some("tiejunhu"), Some("mcp-smart-proxy"), Some("releases"), Some("tag")) => {
+        (Some("cybershape"), Some("mcp-smart-proxy"), Some("releases"), Some("tag")) => {
             segments.next().and_then(parse_release_tag)
         }
         _ => parse_release_tag(url.path().rsplit('/').next()?),
@@ -197,7 +197,8 @@ mod tests {
     #[test]
     fn parses_release_version_from_latest_redirect_url() {
         let url =
-            Url::parse("https://github.com/tiejunhu/mcp-smart-proxy/releases/tag/v0.0.16").unwrap();
+            Url::parse("https://github.com/cybershape/mcp-smart-proxy/releases/tag/v0.0.16")
+                .unwrap();
 
         assert_eq!(
             parse_release_version_from_url(&url).as_deref(),

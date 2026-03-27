@@ -34,13 +34,13 @@ Your Agents see only these three tools. When they want to use a tool from a MCP 
 Install the latest released build with Homebrew:
 
 ```bash
-brew install tiejunhu/mcp-smart-proxy/msp
+brew install cybershape/mcp-smart-proxy/msp
 ```
 
 Or install the latest release for the current platform with the repository installer:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/tiejunhu/mcp-smart-proxy/master/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/cybershape/mcp-smart-proxy/master/install.sh | bash
 ```
 
 The installer resolves the latest version through the GitHub Releases redirect path instead of the GitHub REST API, which avoids unauthenticated `api.github.com` rate limits.
@@ -50,13 +50,13 @@ By default the installer writes `msp` to `/opt/homebrew/bin` when that directory
 Install to a custom location instead:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/tiejunhu/mcp-smart-proxy/master/install.sh | INSTALL_DIR=/tmp/msp/bin bash
+curl -fsSL https://raw.githubusercontent.com/cybershape/mcp-smart-proxy/master/install.sh | INSTALL_DIR=/tmp/msp/bin bash
 ```
 
 Install a specific released version instead of the latest one:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/tiejunhu/mcp-smart-proxy/master/install.sh | VERSION=v0.0.19 bash
+curl -fsSL https://raw.githubusercontent.com/cybershape/mcp-smart-proxy/master/install.sh | VERSION=v0.0.19 bash
 ```
 
 After installation, run:
@@ -107,7 +107,7 @@ Example success output:
 Example warning output:
 
 ```text
-[MSP][WARN][startup.version_check] A newer msp release is available: v0.0.16 (current: v0.0.15). See https://github.com/tiejunhu/mcp-smart-proxy/releases
+[MSP][WARN][startup.version_check] A newer msp release is available: v0.0.16 (current: v0.0.15). See https://github.com/cybershape/mcp-smart-proxy/releases
 ```
 
 Example failure output:

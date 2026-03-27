@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-readonly REPOSITORY="${REPOSITORY:-tiejunhu/mcp-smart-proxy}"
+readonly REPOSITORY="${REPOSITORY:-cybershape/mcp-smart-proxy}"
 readonly BINARY_NAME="msp"
 readonly RELEASES_BASE="https://github.com/${REPOSITORY}/releases"
 

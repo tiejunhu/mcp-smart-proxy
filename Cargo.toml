@@ -4,8 +4,8 @@ version = "0.0.19"
 edition = "2024"
 default-run = "msp"
 description = "A smart proxy for multiple stdio MCP servers"
-homepage = "https://github.com/tiejunhu/mcp-smart-proxy"
-repository = "https://github.com/tiejunhu/mcp-smart-proxy"
+homepage = "https://github.com/cybershape/mcp-smart-proxy"
+repository = "https://github.com/cybershape/mcp-smart-proxy"
 
 [[bin]]
 name = "msp"
