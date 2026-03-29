@@ -174,6 +174,7 @@ Notes:
 - The config file only stores managed `servers`.
 - Each server is enabled by default. Set `enabled = false` or run `msp disable <name>` to keep it configured but exclude it from `msp mcp` activation and bulk reload.
 - `env` stores static environment variables for the downstream MCP server, while `env_vars` lists variable names that `msp` forwards from its own process environment when it starts that server.
+- `msp config <name>` shows one managed server's current `transport`, `enabled`, `command`, `args`, `env`, and `env_vars` values, and can also update them in place.
 - `add`, `reload`, and `mcp` require `--provider <codex|opencode>`.
 - `import` accepts `--provider <codex|opencode>` and falls back to the current import source provider when omitted.
 - `codex` uses the built-in default model `gpt-5.2`.
@@ -227,6 +228,32 @@ These commands resolve the server by exact or normalized name and update its `en
 Disabled servers stay in the config and keep their cache files, but `msp reload --provider ...` without a name and `msp mcp --provider ...` skip them.
 An explicit `msp reload --provider ... <name>` still works for a disabled server.
 
+### Show or update a server config
+
+Show one server's current config:
+
+```bash
+msp config github
+```
+
+Update fields in place:
+
+```bash
+msp config github --cmd uvx --clear-args --arg demo-server --env DEMO_REGION=global --env-var DEMO_TOKEN --enabled false
+```
+
+This command:
+
+1. resolves the server by exact or normalized name
+2. prints the current `transport`, `enabled`, `command`, `args`, `env`, and `env_vars` values when no update flags are passed
+3. updates `command` with `--cmd`
+4. appends `--arg` values to the current args list, or replaces the list when combined with `--clear-args`
+5. adds or replaces static environment variables with `--env KEY=VALUE`, removes specific keys with `--unset-env KEY`, and clears the whole table with `--clear-env`
+6. adds forwarded environment variable names with `--env-var NAME`, removes specific names with `--unset-env-var NAME`, and clears the whole list with `--clear-env-vars`
+7. updates `enabled` with `--enabled true|false`
+
+`msp` currently supports only `stdio` managed servers, so `msp config --transport stdio` is accepted but no other transport is valid.
+
 ### Import servers from Codex
 
 ```bash
@@ -238,7 +265,7 @@ This command:
 1. reads Codex MCP servers from `$CODEX_HOME/config.toml` or `~/.codex/config.toml`
 2. imports each server into the `msp` config
 3. preserves each imported server's optional `enabled` flag and defaults to enabled when the source omits it
-4. preserves each imported server's optional `env` table and `env_vars` list, and converts remote `url` plus optional `http_headers` into `npx -y mcp-remote ... --header ...`
+4. preserves each imported server's optional `env` table and `env_vars` list, and converts remote `url` plus optional `http_headers`, `bearer_token_env_var`, and `env_http_headers` into `npx -y mcp-remote ... --header ...`
 5. reloads only imported servers that are enabled
 6. resolves the summary provider with priority `--provider`, then the current import source provider (`codex`)
 
@@ -248,7 +275,7 @@ For example, `msp import --provider opencode codex` imports Codex servers but su
 If a Codex server name already exists in the `msp` config after normalization, that server is skipped.
 If a Codex server launches this proxy with `msp mcp`, that entry is also skipped during import.
 
-Only Codex MCP servers defined with `command`, optional string `args`, optional boolean `enabled`, optional string-to-string `env`, optional string-array `env_vars`, or remote `url` with optional string-to-string `http_headers` are importable. Entries that rely on other settings such as `cwd` are rejected instead of being imported partially.
+Only Codex MCP servers defined with `command`, optional string `args`, optional boolean `enabled`, optional string-to-string `env`, optional string-array `env_vars`, or remote `url` with optional string-to-string `http_headers`, string `bearer_token_env_var`, and string-to-string `env_http_headers` are importable. `bearer_token_env_var` becomes an `Authorization: Bearer ${ENV_VAR}` header, and `env_http_headers` maps each header name to an environment variable placeholder. Entries that rely on other settings such as `cwd` are rejected instead of being imported partially.
 
 Running `msp import` without a source prints the command help instead of a missing-argument error.
 
@@ -273,7 +300,7 @@ For example, `msp import --provider codex opencode` imports OpenCode servers but
 If an OpenCode server name already exists in the `msp` config after normalization, that server is skipped.
 If an OpenCode server launches this proxy with `msp mcp`, that entry is also skipped during import.
 
-Only OpenCode MCP servers defined as local servers with a string-array `command`, optional `type = "local"`, optional boolean `enabled`, and optional string-to-string `environment`, or as remote servers with `type = "remote"`, a string `url`, optional boolean `enabled`, and optional string-to-string `headers`, are importable. Other settings are rejected instead of being imported partially.
+Only OpenCode MCP servers defined as local servers with a string-array `command`, optional `type = "local"`, optional boolean `enabled`, and optional string-to-string `environment`, or as remote servers with `type = "remote"`, a string `url`, optional boolean `enabled`, and optional string-to-string `headers`, are importable. OpenCode already supports environment-variable substitution inside `headers`, and `msp import opencode` preserves those remote header placeholders by converting them for `mcp-remote`. Other settings are rejected instead of being imported partially.
 
 ### Install this proxy into Codex or OpenCode
 

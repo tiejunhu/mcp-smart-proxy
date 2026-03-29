@@ -37,6 +37,32 @@ pub enum Command {
     Enable { name: String },
     /// Disable a configured MCP server.
     Disable { name: String },
+    /// Show or update one configured MCP server.
+    Config {
+        name: String,
+        #[arg(long = "transport", value_enum)]
+        transport: Option<ServerTransport>,
+        #[arg(long = "cmd", alias = "command", value_name = "COMMAND")]
+        command: Option<String>,
+        #[arg(long = "arg", value_name = "ARG")]
+        args: Vec<String>,
+        #[arg(long)]
+        clear_args: bool,
+        #[arg(long)]
+        enabled: Option<bool>,
+        #[arg(long = "env", value_name = "KEY=VALUE")]
+        env: Vec<String>,
+        #[arg(long = "unset-env", value_name = "KEY")]
+        unset_env: Vec<String>,
+        #[arg(long)]
+        clear_env: bool,
+        #[arg(long = "env-var", value_name = "NAME")]
+        env_vars: Vec<String>,
+        #[arg(long = "unset-env-var", value_name = "NAME")]
+        unset_env_vars: Vec<String>,
+        #[arg(long)]
+        clear_env_vars: bool,
+    },
     /// Import MCP servers from another tool's config and refresh their cached tools.
     #[command(arg_required_else_help = true)]
     Import {
@@ -84,6 +110,19 @@ pub enum InstallTarget {
 pub enum ProviderName {
     Codex,
     Opencode,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum ServerTransport {
+    Stdio,
+}
+
+impl ServerTransport {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Stdio => "stdio",
+        }
+    }
 }
 
 impl ProviderName {
@@ -277,6 +316,101 @@ mod tests {
                 assert_eq!(name, "server1");
             }
             other => panic!("expected disable command, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_config_read_command() {
+        let cli = Cli::parse_from(["msp", "config", "github"]);
+
+        match cli.command {
+            Some(Command::Config {
+                name,
+                transport,
+                command,
+                args,
+                clear_args,
+                enabled,
+                env,
+                unset_env,
+                clear_env,
+                env_vars,
+                unset_env_vars,
+                clear_env_vars,
+            }) => {
+                assert_eq!(name, "github");
+                assert_eq!(transport, None);
+                assert_eq!(command, None);
+                assert!(args.is_empty());
+                assert!(!clear_args);
+                assert_eq!(enabled, None);
+                assert!(env.is_empty());
+                assert!(unset_env.is_empty());
+                assert!(!clear_env);
+                assert!(env_vars.is_empty());
+                assert!(unset_env_vars.is_empty());
+                assert!(!clear_env_vars);
+            }
+            other => panic!("expected config command, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_config_update_command() {
+        let cli = Cli::parse_from([
+            "msp",
+            "config",
+            "github",
+            "--transport",
+            "stdio",
+            "--cmd",
+            "uvx",
+            "--clear-args",
+            "--arg",
+            "demo-server",
+            "--enabled",
+            "false",
+            "--env",
+            "DEMO_REGION=global",
+            "--unset-env",
+            "OLD_KEY",
+            "--clear-env",
+            "--env-var",
+            "DEMO_TOKEN",
+            "--unset-env-var",
+            "OLD_TOKEN",
+            "--clear-env-vars",
+        ]);
+
+        match cli.command {
+            Some(Command::Config {
+                name,
+                transport,
+                command,
+                args,
+                clear_args,
+                enabled,
+                env,
+                unset_env,
+                clear_env,
+                env_vars,
+                unset_env_vars,
+                clear_env_vars,
+            }) => {
+                assert_eq!(name, "github");
+                assert_eq!(transport, Some(ServerTransport::Stdio));
+                assert_eq!(command.as_deref(), Some("uvx"));
+                assert_eq!(args, vec!["demo-server".to_string()]);
+                assert!(clear_args);
+                assert_eq!(enabled, Some(false));
+                assert_eq!(env, vec!["DEMO_REGION=global".to_string()]);
+                assert_eq!(unset_env, vec!["OLD_KEY".to_string()]);
+                assert!(clear_env);
+                assert_eq!(env_vars, vec!["DEMO_TOKEN".to_string()]);
+                assert_eq!(unset_env_vars, vec!["OLD_TOKEN".to_string()]);
+                assert!(clear_env_vars);
+            }
+            other => panic!("expected config command, got {other:?}"),
         }
     }
 

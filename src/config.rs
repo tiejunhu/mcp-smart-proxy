@@ -85,6 +85,48 @@ pub struct SetServerEnabledResult {
     pub enabled: bool,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ServerConfigSnapshot {
+    pub name: String,
+    pub transport: String,
+    pub enabled: bool,
+    pub command: String,
+    pub args: Vec<String>,
+    pub env: BTreeMap<String, String>,
+    pub env_vars: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct UpdateServerConfig {
+    pub transport: Option<String>,
+    pub command: Option<String>,
+    pub clear_args: bool,
+    pub add_args: Vec<String>,
+    pub enabled: Option<bool>,
+    pub clear_env: bool,
+    pub set_env: BTreeMap<String, String>,
+    pub unset_env: Vec<String>,
+    pub clear_env_vars: bool,
+    pub add_env_vars: Vec<String>,
+    pub unset_env_vars: Vec<String>,
+}
+
+impl UpdateServerConfig {
+    pub fn has_changes(&self) -> bool {
+        self.transport.is_some()
+            || self.command.is_some()
+            || self.clear_args
+            || !self.add_args.is_empty()
+            || self.enabled.is_some()
+            || self.clear_env
+            || !self.set_env.is_empty()
+            || !self.unset_env.is_empty()
+            || self.clear_env_vars
+            || !self.add_env_vars.is_empty()
+            || !self.unset_env_vars.is_empty()
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InstallMcpServerStatus {
     AlreadyInstalled,
@@ -412,6 +454,114 @@ pub fn server_is_enabled(config: &Table, requested_name: &str) -> Result<bool, B
         .ok_or_else(|| format!("server `{resolved_name}` must be a table"))?;
 
     parse_server_enabled(server, &resolved_name)
+}
+
+pub fn load_server_config(
+    config_path: &Path,
+    requested_name: &str,
+) -> Result<ServerConfigSnapshot, Box<dyn Error>> {
+    let config = load_config_table(config_path)?;
+    let (resolved_name, server) = resolved_server_table(&config, requested_name)?;
+    server_config_snapshot(&resolved_name, server)
+}
+
+pub fn update_server_config(
+    config_path: &Path,
+    requested_name: &str,
+    update: &UpdateServerConfig,
+) -> Result<ServerConfigSnapshot, Box<dyn Error>> {
+    let mut config = load_config_table(config_path)?;
+    let resolved_name = {
+        let (resolved_name, server) = resolved_server_table_mut(&mut config, requested_name)?;
+
+        if let Some(transport) = &update.transport {
+            if transport != "stdio" {
+                return Err(format!(
+                    "server `{resolved_name}` uses unsupported transport `{transport}`, only `stdio` is supported"
+                )
+                .into());
+            }
+            server.insert("transport".to_string(), Value::String(transport.clone()));
+        }
+
+        if let Some(command) = &update.command {
+            server.insert("command".to_string(), Value::String(command.clone()));
+        }
+
+        if update.clear_args || !update.add_args.is_empty() {
+            let mut args = if update.clear_args {
+                Vec::new()
+            } else {
+                parse_toml_string_array(server.get("args"), "args", "server", &resolved_name)?
+            };
+            args.extend(update.add_args.iter().cloned());
+            server.insert(
+                "args".to_string(),
+                Value::Array(args.into_iter().map(Value::String).collect()),
+            );
+        }
+
+        if let Some(enabled) = update.enabled {
+            server.insert("enabled".to_string(), Value::Boolean(enabled));
+        }
+
+        if update.clear_env || !update.set_env.is_empty() || !update.unset_env.is_empty() {
+            let mut env = if update.clear_env {
+                BTreeMap::new()
+            } else {
+                parse_toml_string_table(server.get("env"), "env", "server", &resolved_name)?
+            };
+            for key in &update.unset_env {
+                env.remove(key);
+            }
+            for (key, value) in &update.set_env {
+                env.insert(key.clone(), value.clone());
+            }
+            if env.is_empty() {
+                server.remove("env");
+            } else {
+                server.insert(
+                    "env".to_string(),
+                    Value::Table(
+                        env.into_iter()
+                            .map(|(key, value)| (key, Value::String(value)))
+                            .collect(),
+                    ),
+                );
+            }
+        }
+
+        if update.clear_env_vars
+            || !update.add_env_vars.is_empty()
+            || !update.unset_env_vars.is_empty()
+        {
+            let mut env_vars = if update.clear_env_vars {
+                Vec::new()
+            } else {
+                parse_toml_string_array(
+                    server.get("env_vars"),
+                    "env_vars",
+                    "server",
+                    &resolved_name,
+                )?
+            };
+            env_vars.retain(|name| !update.unset_env_vars.contains(name));
+            merge_env_vars(&mut env_vars, update.add_env_vars.clone());
+            if env_vars.is_empty() {
+                server.remove("env_vars");
+            } else {
+                server.insert(
+                    "env_vars".to_string(),
+                    Value::Array(env_vars.into_iter().map(Value::String).collect()),
+                );
+            }
+        }
+
+        resolved_name
+    };
+
+    save_config_table(config_path, &config)?;
+    load_server_config(config_path, &resolved_name)
 }
 
 pub fn load_codex_servers_for_import() -> Result<(PathBuf, ImportPlan), Box<dyn Error>> {
@@ -970,6 +1120,81 @@ fn parse_json_string_object(
     }
 }
 
+fn resolved_server_table<'a>(
+    config: &'a Table,
+    requested_name: &str,
+) -> Result<(String, &'a Table), Box<dyn Error>> {
+    let servers = config
+        .get("servers")
+        .and_then(Value::as_table)
+        .ok_or_else(|| "no `servers` table found in config".to_string())?;
+
+    let resolved_name = resolve_server_name(servers, requested_name)
+        .ok_or_else(|| format!("server `{requested_name}` not found"))?;
+    let server = servers
+        .get(&resolved_name)
+        .and_then(Value::as_table)
+        .ok_or_else(|| format!("server `{resolved_name}` must be a table"))?;
+
+    Ok((resolved_name, server))
+}
+
+fn resolved_server_table_mut<'a>(
+    config: &'a mut Table,
+    requested_name: &str,
+) -> Result<(String, &'a mut Table), Box<dyn Error>> {
+    let servers = config
+        .get_mut("servers")
+        .and_then(Value::as_table_mut)
+        .ok_or_else(|| "no `servers` table found in config".to_string())?;
+
+    let resolved_name = resolve_server_name(servers, requested_name)
+        .ok_or_else(|| format!("server `{requested_name}` not found"))?;
+    let server = servers
+        .get_mut(&resolved_name)
+        .and_then(Value::as_table_mut)
+        .ok_or_else(|| format!("server `{resolved_name}` must be a table"))?;
+
+    Ok((resolved_name, server))
+}
+
+fn server_config_snapshot(
+    resolved_name: &str,
+    server: &Table,
+) -> Result<ServerConfigSnapshot, Box<dyn Error>> {
+    let transport = server
+        .get("transport")
+        .and_then(Value::as_str)
+        .unwrap_or("stdio");
+    if transport != "stdio" {
+        return Err(format!(
+            "server `{resolved_name}` uses unsupported transport `{transport}`, only `stdio` is supported"
+        )
+        .into());
+    }
+
+    let command = server
+        .get("command")
+        .and_then(Value::as_str)
+        .ok_or_else(|| format!("server `{resolved_name}` is missing `command`"))?
+        .to_string();
+    let args = parse_toml_string_array(server.get("args"), "args", "server", resolved_name)?;
+    let enabled = parse_server_enabled(server, resolved_name)?;
+    let env = parse_toml_string_table(server.get("env"), "env", "server", resolved_name)?;
+    let env_vars =
+        parse_toml_string_array(server.get("env_vars"), "env_vars", "server", resolved_name)?;
+
+    Ok(ServerConfigSnapshot {
+        name: resolved_name.to_string(),
+        transport: transport.to_string(),
+        enabled,
+        command,
+        args,
+        env,
+        env_vars,
+    })
+}
+
 fn codex_imported_server_command(
     server: &Table,
     name: &str,
@@ -986,12 +1211,32 @@ fn codex_imported_server_command(
             Err(format!("Codex MCP server `{name}` cannot define both `url` and `command`").into())
         }
         (Some(Value::String(url)), None) => {
-            let headers = parse_toml_string_table(
+            let mut headers = parse_toml_string_table(
                 server.get("http_headers"),
                 "http_headers",
                 "Codex MCP server",
                 name,
             )?;
+            let env_http_headers = parse_toml_string_table(
+                server.get("env_http_headers"),
+                "env_http_headers",
+                "Codex MCP server",
+                name,
+            )?;
+            for (header_name, env_var_name) in env_http_headers {
+                headers.insert(header_name, format!("{{env:{env_var_name}}}"));
+            }
+            if let Some(Value::String(bearer_token_env_var)) = server.get("bearer_token_env_var") {
+                headers.insert(
+                    "Authorization".to_string(),
+                    format!("Bearer {{env:{bearer_token_env_var}}}"),
+                );
+            } else if matches!(server.get("bearer_token_env_var"), Some(_)) {
+                return Err(format!(
+                    "Codex MCP server `{name}` has a non-string `bearer_token_env_var` field"
+                )
+                .into());
+            }
             let (command, header_env_vars) = mcp_remote_command(url, &headers);
             merge_env_vars(&mut env_vars, header_env_vars);
             Ok((command, env, env_vars))
@@ -1477,7 +1722,15 @@ fn validate_importable_codex_server(name: &str, server: &Table) -> Result<(), Bo
         .filter(|key| {
             !matches!(
                 key.as_str(),
-                "command" | "args" | "enabled" | "env" | "env_vars" | "url" | "http_headers"
+                "command"
+                    | "args"
+                    | "enabled"
+                    | "env"
+                    | "env_vars"
+                    | "url"
+                    | "http_headers"
+                    | "bearer_token_env_var"
+                    | "env_http_headers"
             )
         })
         .map(|key| format!("`{key}`"))
@@ -1488,7 +1741,7 @@ fn validate_importable_codex_server(name: &str, server: &Table) -> Result<(), Bo
     }
 
     Err(format!(
-        "Codex MCP server `{name}` uses unsupported settings {}; only `command`, `args`, optional `enabled`, `env`, `env_vars`, or remote `url` with optional `http_headers` can be imported",
+        "Codex MCP server `{name}` uses unsupported settings {}; only `command`, `args`, optional `enabled`, `env`, `env_vars`, or remote `url` with optional `http_headers`, `bearer_token_env_var`, and `env_http_headers` can be imported",
         unsupported_keys.join(", ")
     )
     .into())
@@ -2197,6 +2450,72 @@ mod tests {
     }
 
     #[test]
+    fn loads_codex_remote_server_bearer_token_env_var_for_import() {
+        let config_path = unique_test_path("codex-import-remote-bearer.toml");
+        fs::write(
+            &config_path,
+            r#"
+                [mcp_servers.demo]
+                url = "https://example.com/mcp"
+                bearer_token_env_var = "DEMO_TOKEN"
+            "#,
+        )
+        .unwrap();
+
+        let plan = load_codex_servers_for_import_from_path(&config_path).unwrap();
+
+        assert_eq!(plan.servers.len(), 1);
+        assert_eq!(
+            plan.servers[0].command,
+            vec![
+                "npx".to_string(),
+                "-y".to_string(),
+                "mcp-remote".to_string(),
+                "https://example.com/mcp".to_string(),
+                "--header".to_string(),
+                "Authorization: Bearer ${DEMO_TOKEN}".to_string(),
+            ]
+        );
+        assert_eq!(plan.servers[0].env_vars, vec!["DEMO_TOKEN".to_string()]);
+
+        fs::remove_file(config_path).unwrap();
+    }
+
+    #[test]
+    fn loads_codex_remote_server_env_http_headers_for_import() {
+        let config_path = unique_test_path("codex-import-remote-env-headers.toml");
+        fs::write(
+            &config_path,
+            r#"
+                [mcp_servers.demo]
+                url = "https://example.com/mcp"
+
+                [mcp_servers.demo.env_http_headers]
+                X-Workspace = "DEMO_WORKSPACE"
+            "#,
+        )
+        .unwrap();
+
+        let plan = load_codex_servers_for_import_from_path(&config_path).unwrap();
+
+        assert_eq!(plan.servers.len(), 1);
+        assert_eq!(
+            plan.servers[0].command,
+            vec![
+                "npx".to_string(),
+                "-y".to_string(),
+                "mcp-remote".to_string(),
+                "https://example.com/mcp".to_string(),
+                "--header".to_string(),
+                "X-Workspace: ${DEMO_WORKSPACE}".to_string(),
+            ]
+        );
+        assert_eq!(plan.servers[0].env_vars, vec!["DEMO_WORKSPACE".to_string()]);
+
+        fs::remove_file(config_path).unwrap();
+    }
+
+    #[test]
     fn loads_opencode_servers_for_import_from_path() {
         let config_path = unique_test_path("opencode-import.json");
         fs::write(
@@ -2543,7 +2862,7 @@ mod tests {
 
         assert_eq!(
             error.to_string(),
-            "Codex MCP server `demo` uses unsupported settings `cwd`; only `command`, `args`, optional `enabled`, `env`, `env_vars`, or remote `url` with optional `http_headers` can be imported"
+            "Codex MCP server `demo` uses unsupported settings `cwd`; only `command`, `args`, optional `enabled`, `env`, `env_vars`, or remote `url` with optional `http_headers`, `bearer_token_env_var`, and `env_http_headers` can be imported"
         );
 
         fs::remove_file(config_path).unwrap();
@@ -2663,6 +2982,135 @@ mod tests {
         assert_eq!(
             saved["env_vars"].as_array().unwrap(),
             &vec![Value::String("DEMO_TOKEN".to_string())]
+        );
+
+        fs::remove_file(config_path).unwrap();
+    }
+
+    #[test]
+    fn loads_server_config_snapshot() {
+        let config_path = unique_test_path("load-server-config.toml");
+        fs::write(
+            &config_path,
+            r#"
+                [servers.demo]
+                transport = "stdio"
+                command = "uvx"
+                args = ["demo-server"]
+                enabled = false
+                env_vars = ["DEMO_TOKEN"]
+
+                [servers.demo.env]
+                DEMO_REGION = "global"
+            "#,
+        )
+        .unwrap();
+
+        let snapshot = load_server_config(&config_path, "demo").unwrap();
+
+        assert_eq!(
+            snapshot,
+            ServerConfigSnapshot {
+                name: "demo".to_string(),
+                transport: "stdio".to_string(),
+                enabled: false,
+                command: "uvx".to_string(),
+                args: vec!["demo-server".to_string()],
+                env: BTreeMap::from([("DEMO_REGION".to_string(), "global".to_string())]),
+                env_vars: vec!["DEMO_TOKEN".to_string()],
+            }
+        );
+
+        fs::remove_file(config_path).unwrap();
+    }
+
+    #[test]
+    fn updates_server_config_fields() {
+        let config_path = unique_test_path("update-server-config.toml");
+        fs::write(
+            &config_path,
+            r#"
+                [servers.demo]
+                transport = "stdio"
+                command = "npx"
+                args = ["-y", "demo-server"]
+                enabled = false
+                env_vars = ["OLD_TOKEN"]
+
+                [servers.demo.env]
+                OLD_REGION = "legacy"
+            "#,
+        )
+        .unwrap();
+
+        let updated = update_server_config(
+            &config_path,
+            "demo",
+            &UpdateServerConfig {
+                transport: Some("stdio".to_string()),
+                command: Some("uvx".to_string()),
+                clear_args: true,
+                add_args: vec!["new-server".to_string()],
+                enabled: Some(true),
+                clear_env: true,
+                set_env: BTreeMap::from([("DEMO_REGION".to_string(), "global".to_string())]),
+                unset_env: vec!["OLD_REGION".to_string()],
+                clear_env_vars: true,
+                add_env_vars: vec!["DEMO_TOKEN".to_string()],
+                unset_env_vars: vec!["OLD_TOKEN".to_string()],
+            },
+        )
+        .unwrap();
+
+        assert_eq!(
+            updated,
+            ServerConfigSnapshot {
+                name: "demo".to_string(),
+                transport: "stdio".to_string(),
+                enabled: true,
+                command: "uvx".to_string(),
+                args: vec!["new-server".to_string()],
+                env: BTreeMap::from([("DEMO_REGION".to_string(), "global".to_string())]),
+                env_vars: vec!["DEMO_TOKEN".to_string()],
+            }
+        );
+
+        fs::remove_file(config_path).unwrap();
+    }
+
+    #[test]
+    fn appends_server_args_and_env_vars_without_clearing() {
+        let config_path = unique_test_path("append-server-config.toml");
+        fs::write(
+            &config_path,
+            r#"
+                [servers.demo]
+                transport = "stdio"
+                command = "uvx"
+                args = ["demo-server"]
+                env_vars = ["DEMO_TOKEN"]
+            "#,
+        )
+        .unwrap();
+
+        let updated = update_server_config(
+            &config_path,
+            "demo",
+            &UpdateServerConfig {
+                add_args: vec!["--verbose".to_string()],
+                add_env_vars: vec!["DEMO_TOKEN".to_string(), "DEMO_REGION".to_string()],
+                ..UpdateServerConfig::default()
+            },
+        )
+        .unwrap();
+
+        assert_eq!(
+            updated.args,
+            vec!["demo-server".to_string(), "--verbose".to_string()]
+        );
+        assert_eq!(
+            updated.env_vars,
+            vec!["DEMO_TOKEN".to_string(), "DEMO_REGION".to_string()]
         );
 
         fs::remove_file(config_path).unwrap();

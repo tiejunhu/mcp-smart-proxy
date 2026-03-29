@@ -15,12 +15,12 @@ mod version_check;
 use cli::{Cli, Command, ImportSource, InstallTarget, ProviderName};
 use config::{
     ImportPlan, InstallMcpServerResult, InstallMcpServerStatus, ReplaceMcpServersResult,
-    RestoreMcpServersResult, add_server, contains_server_name, import_server,
-    install_codex_mcp_server, install_opencode_mcp_server, list_servers,
-    load_codex_servers_for_import, load_config_table, load_model_provider_config,
-    load_opencode_servers_for_import, remove_server, replace_codex_mcp_servers,
+    RestoreMcpServersResult, ServerConfigSnapshot, UpdateServerConfig, add_server,
+    contains_server_name, import_server, install_codex_mcp_server, install_opencode_mcp_server,
+    list_servers, load_codex_servers_for_import, load_config_table, load_model_provider_config,
+    load_opencode_servers_for_import, load_server_config, remove_server, replace_codex_mcp_servers,
     replace_opencode_mcp_servers, restore_codex_mcp_servers, restore_opencode_mcp_servers,
-    set_server_enabled,
+    set_server_enabled, update_server_config,
 };
 use console::{describe_command, operation_error, print_app_error, print_app_event};
 use paths::expand_tilde;
@@ -185,6 +185,68 @@ async fn run() -> Result<(), Box<dyn Error>> {
                     config_path.display()
                 ),
             );
+        }
+        Some(Command::Config {
+            name,
+            transport,
+            command,
+            args,
+            clear_args,
+            enabled,
+            env,
+            unset_env,
+            clear_env,
+            env_vars,
+            unset_env_vars,
+            clear_env_vars,
+        }) => {
+            let set_env = parse_env_assignments(&env).map_err(|error| {
+                operation_error(
+                    "cli.config.parse_env",
+                    format!("failed to parse `--env` values for server `{name}`"),
+                    error,
+                )
+            })?;
+            let update = UpdateServerConfig {
+                transport: transport.map(|value| value.as_str().to_string()),
+                command,
+                clear_args,
+                add_args: args,
+                enabled,
+                clear_env,
+                set_env,
+                unset_env,
+                clear_env_vars,
+                add_env_vars: env_vars,
+                unset_env_vars,
+            };
+
+            if update.has_changes() {
+                let snapshot =
+                    update_server_config(&config_path, &name, &update).map_err(|error| {
+                        operation_error(
+                            "cli.config.update",
+                            format!(
+                                "failed to update MCP server `{name}` in {}",
+                                config_path.display()
+                            ),
+                            error,
+                        )
+                    })?;
+                print_server_config("cli.config", &config_path, &snapshot);
+            } else {
+                let snapshot = load_server_config(&config_path, &name).map_err(|error| {
+                    operation_error(
+                        "cli.config.read",
+                        format!(
+                            "failed to read MCP server `{name}` from {}",
+                            config_path.display()
+                        ),
+                        error,
+                    )
+                })?;
+                print_server_config("cli.config", &config_path, &snapshot);
+            }
         }
         Some(Command::Import {
             provider,
@@ -887,9 +949,66 @@ fn print_restore_result(stage: &str, provider: &str, restored: &RestoreMcpServer
     print_app_event(stage, message);
 }
 
+fn print_server_config(
+    stage: &str,
+    config_path: &std::path::Path,
+    snapshot: &ServerConfigSnapshot,
+) {
+    print_app_event(
+        stage,
+        format!("Server `{}` in {}", snapshot.name, config_path.display()),
+    );
+    print_app_event(stage, format!("transport: {}", snapshot.transport));
+    print_app_event(stage, format!("enabled: {}", snapshot.enabled));
+    print_app_event(stage, format!("command: {}", snapshot.command));
+    if snapshot.args.is_empty() {
+        print_app_event(stage, "args: []");
+    } else {
+        print_app_event(stage, format!("args: [{}]", snapshot.args.join(", ")));
+    }
+    if snapshot.env.is_empty() {
+        print_app_event(stage, "env: {}");
+    } else {
+        for (key, value) in &snapshot.env {
+            print_app_event(stage, format!("env.{key}: {value}"));
+        }
+    }
+    if snapshot.env_vars.is_empty() {
+        print_app_event(stage, "env_vars: []");
+    } else {
+        print_app_event(
+            stage,
+            format!("env_vars: [{}]", snapshot.env_vars.join(", ")),
+        );
+    }
+}
+
+fn parse_env_assignments(
+    assignments: &[String],
+) -> Result<std::collections::BTreeMap<String, String>, Box<dyn Error>> {
+    let mut env = std::collections::BTreeMap::new();
+
+    for assignment in assignments {
+        let Some((key, value)) = assignment.split_once('=') else {
+            return Err(
+                format!("invalid env assignment `{assignment}`; expected `KEY=VALUE`").into(),
+            );
+        };
+        if key.is_empty() {
+            return Err(
+                format!("invalid env assignment `{assignment}`; key must not be empty").into(),
+            );
+        }
+        env.insert(key.to_string(), value.to_string());
+    }
+
+    Ok(env)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::BTreeMap;
 
     #[test]
     fn formats_missing_last_updated_as_never() {
@@ -935,5 +1054,33 @@ mod tests {
         let provider = resolve_install_import_provider(ImportSource::Codex).unwrap();
 
         assert!(matches!(provider, ModelProviderConfig::Codex(_)));
+    }
+
+    #[test]
+    fn parses_env_assignments_into_sorted_map() {
+        let env = parse_env_assignments(&[
+            "B=two".to_string(),
+            "A=one".to_string(),
+            "B=override".to_string(),
+        ])
+        .unwrap();
+
+        assert_eq!(
+            env,
+            BTreeMap::from([
+                ("A".to_string(), "one".to_string()),
+                ("B".to_string(), "override".to_string()),
+            ])
+        );
+    }
+
+    #[test]
+    fn rejects_invalid_env_assignment() {
+        let error = parse_env_assignments(&["INVALID".to_string()]).unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            "invalid env assignment `INVALID`; expected `KEY=VALUE`"
+        );
     }
 }
