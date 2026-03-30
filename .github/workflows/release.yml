@@ -11,7 +11,6 @@ permissions:
 
 env:
   BINARY_NAME: msp
-  HOMEBREW_TAP_REPOSITORY: cybershape/homebrew-mcp-smart-proxy
   CARGO_TERM_COLOR: always
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
@@ -114,8 +113,6 @@ jobs:
     needs:
       - build-linux
       - build-macos
-    environment:
-      name: HOMEBREW_TAP_GITHUB_TOKEN
 
     steps:
       - name: Check out repository
@@ -131,56 +128,3 @@ jobs:
         with:
           files: dist/*/*.tar.gz
           generate_release_notes: true
-
-      - name: Require tap repository token
-        if: startsWith(github.ref, 'refs/tags/v')
-        env:
-          HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          if [[ -z "${HOMEBREW_TAP_GITHUB_TOKEN}" ]]; then
-            echo "HOMEBREW_TAP_GITHUB_TOKEN is required to push Formula/msp.rb to ${HOMEBREW_TAP_REPOSITORY}" >&2
-            exit 1
-          fi
-
-      - name: Check out Homebrew tap repository
-        if: startsWith(github.ref, 'refs/tags/v')
-        uses: actions/checkout@v6
-        with:
-          path: homebrew-tap
-          repository: ${{ env.HOMEBREW_TAP_REPOSITORY }}
-          token: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
-
-      - name: Sync Homebrew tap formula
-        if: startsWith(github.ref, 'refs/tags/v')
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          version="${GITHUB_REF_NAME#v}"
-
-          macos_arm64_archive="dist/${BINARY_NAME}-${GITHUB_REF_NAME}-macos/${BINARY_NAME}-${GITHUB_REF_NAME}-aarch64-apple-darwin.tar.gz"
-          macos_x86_64_archive="dist/${BINARY_NAME}-${GITHUB_REF_NAME}-macos/${BINARY_NAME}-${GITHUB_REF_NAME}-x86_64-apple-darwin.tar.gz"
-          linux_arm64_archive="dist/${BINARY_NAME}-${GITHUB_REF_NAME}-linux/${BINARY_NAME}-${GITHUB_REF_NAME}-aarch64-unknown-linux-gnu.tar.gz"
-          linux_x86_64_archive="dist/${BINARY_NAME}-${GITHUB_REF_NAME}-linux/${BINARY_NAME}-${GITHUB_REF_NAME}-x86_64-unknown-linux-gnu.tar.gz"
-
-          scripts/render-homebrew-formula.sh \
-            "homebrew-tap/Formula/msp.rb" \
-            "${version}" \
-            "${BINARY_NAME}" \
-            "$(sha256sum "${macos_arm64_archive}" | awk '{print $1}')" \
-            "$(sha256sum "${macos_x86_64_archive}" | awk '{print $1}')" \
-            "$(sha256sum "${linux_arm64_archive}" | awk '{print $1}')" \
-            "$(sha256sum "${linux_x86_64_archive}" | awk '{print $1}')"
-
-          if git -C homebrew-tap diff --quiet -- Formula/msp.rb; then
-            exit 0
-          fi
-
-          git -C homebrew-tap config user.name "github-actions[bot]"
-          git -C homebrew-tap config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git -C homebrew-tap add Formula/msp.rb
-          git -C homebrew-tap commit -m "Update msp formula for ${GITHUB_REF_NAME}"
-          git -C homebrew-tap push origin HEAD
