@@ -24,6 +24,11 @@ pub(crate) struct ProviderHooks {
     pub(crate) install_server: InstallFn,
     pub(crate) replace_servers: ReplaceFn,
     pub(crate) restore_servers: RestoreFn,
+    import_load_provider_stage: &'static str,
+    import_load_source_stage: &'static str,
+    import_run_stage: &'static str,
+    install_stage: &'static str,
+    restore_stage: &'static str,
 }
 
 pub(crate) fn provider_hooks_for_import_source(source: ImportSource) -> ProviderHooks {
@@ -43,36 +48,21 @@ pub(crate) fn provider_hooks_for_install_target(target: InstallTarget) -> Provid
 }
 
 pub(crate) fn import_stage(provider_name: &'static str, suffix: &'static str) -> &'static str {
-    match (provider_name, suffix) {
-        ("codex", "load_provider") => "cli.import.codex.load_provider",
-        ("codex", "load_source") => "cli.import.codex.load_source",
-        ("codex", "run") => "cli.import.codex",
-        ("opencode", "load_provider") => "cli.import.opencode.load_provider",
-        ("opencode", "load_source") => "cli.import.opencode.load_source",
-        ("opencode", "run") => "cli.import.opencode",
-        ("claude", "load_provider") => "cli.import.claude.load_provider",
-        ("claude", "load_source") => "cli.import.claude.load_source",
-        ("claude", "run") => "cli.import.claude",
+    let hooks = provider_hooks(provider_name);
+    match suffix {
+        "load_provider" => hooks.import_load_provider_stage,
+        "load_source" => hooks.import_load_source_stage,
+        "run" => hooks.import_run_stage,
         _ => unreachable!(),
     }
 }
 
 pub(crate) fn install_stage(provider_name: &'static str) -> &'static str {
-    match provider_name {
-        "codex" => "cli.install.codex",
-        "opencode" => "cli.install.opencode",
-        "claude" => "cli.install.claude",
-        _ => unreachable!(),
-    }
+    provider_hooks(provider_name).install_stage
 }
 
 pub(crate) fn restore_stage(provider_name: &'static str) -> &'static str {
-    match provider_name {
-        "codex" => "cli.restore.codex",
-        "opencode" => "cli.restore.opencode",
-        "claude" => "cli.restore.claude",
-        _ => unreachable!(),
-    }
+    provider_hooks(provider_name).restore_stage
 }
 
 pub(crate) fn resolve_default_command_provider(
@@ -102,11 +92,7 @@ pub(crate) fn resolve_install_import_provider(
 }
 
 fn import_source_provider_name(source: ImportSource) -> &'static str {
-    match source {
-        ImportSource::Codex => "codex",
-        ImportSource::Opencode => "opencode",
-        ImportSource::Claude => "claude",
-    }
+    provider_hooks_for_import_source(source).provider_name
 }
 
 fn provider_hooks(provider_name: &'static str) -> ProviderHooks {
@@ -118,6 +104,11 @@ fn provider_hooks(provider_name: &'static str) -> ProviderHooks {
             install_server: install_codex_mcp_server,
             replace_servers: replace_codex_mcp_servers,
             restore_servers: restore_codex_mcp_servers,
+            import_load_provider_stage: "cli.import.codex.load_provider",
+            import_load_source_stage: "cli.import.codex.load_source",
+            import_run_stage: "cli.import.codex",
+            install_stage: "cli.install.codex",
+            restore_stage: "cli.restore.codex",
         },
         "opencode" => ProviderHooks {
             provider_name,
@@ -126,6 +117,11 @@ fn provider_hooks(provider_name: &'static str) -> ProviderHooks {
             install_server: install_opencode_mcp_server,
             replace_servers: replace_opencode_mcp_servers,
             restore_servers: restore_opencode_mcp_servers,
+            import_load_provider_stage: "cli.import.opencode.load_provider",
+            import_load_source_stage: "cli.import.opencode.load_source",
+            import_run_stage: "cli.import.opencode",
+            install_stage: "cli.install.opencode",
+            restore_stage: "cli.restore.opencode",
         },
         "claude" => ProviderHooks {
             provider_name,
@@ -134,6 +130,11 @@ fn provider_hooks(provider_name: &'static str) -> ProviderHooks {
             install_server: install_claude_mcp_server,
             replace_servers: replace_claude_mcp_servers,
             restore_servers: restore_claude_mcp_servers,
+            import_load_provider_stage: "cli.import.claude.load_provider",
+            import_load_source_stage: "cli.import.claude.load_source",
+            import_run_stage: "cli.import.claude",
+            install_stage: "cli.install.claude",
+            restore_stage: "cli.restore.claude",
         },
         _ => unreachable!(),
     }

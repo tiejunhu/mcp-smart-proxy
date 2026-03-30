@@ -9,6 +9,7 @@
 - prefer small files, with a single responsibility, and a clear API
 - when some function is not needed, don't hesitate to remove it, we can always add it back when we need it
 - refresh operations that write cache files must use a sibling `.lock` file so concurrent refreshes for the same target serialize safely
+- after editing, always run `cargo fmt` to ensure consistent code formatting, and `cargo clippy` to catch common mistakes and improve code quality
 
 # packages
 

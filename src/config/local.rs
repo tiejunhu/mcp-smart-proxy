@@ -14,6 +14,25 @@ use super::{
     UpdateServerConfig, is_self_server_command,
 };
 
+enum ParsedServerTransport {
+    Stdio {
+        command: String,
+        args: Vec<String>,
+    },
+    Remote {
+        url: String,
+        headers: BTreeMap<String, String>,
+    },
+}
+
+struct ParsedServerEntry {
+    transport_name: &'static str,
+    transport: ParsedServerTransport,
+    enabled: bool,
+    env: BTreeMap<String, String>,
+    env_vars: Vec<String>,
+}
+
 pub fn add_server(
     config_path: &Path,
     name: &str,
@@ -133,54 +152,18 @@ pub fn list_servers(config_path: &Path) -> Result<Vec<super::ListedServer>, Box<
             let server = servers[&name]
                 .as_table()
                 .ok_or_else(|| format!("server `{name}` must be a table"))?;
-
-            let transport = resolved_server_transport(server, &name)?;
-            let (command, args) = match transport {
-                "stdio" => {
-                    let command = server
-                        .get("command")
-                        .and_then(Value::as_str)
-                        .ok_or_else(|| format!("server `{name}` is missing `command`"))?
-                        .to_string();
-
-                    let args = server
-                        .get("args")
-                        .and_then(Value::as_array)
-                        .map(|items| {
-                            items
-                                .iter()
-                                .map(|value| {
-                                    value.as_str().map(ToOwned::to_owned).ok_or_else(|| {
-                                        format!("server `{name}` contains a non-string arg")
-                                    })
-                                })
-                                .collect::<Result<Vec<_>, _>>()
-                        })
-                        .transpose()?
-                        .unwrap_or_default();
-
-                    (command, args)
-                }
-                "remote" => (
-                    parse_remote_server_url(server, &name)?.to_string(),
-                    Vec::new(),
-                ),
-                other => {
-                    return Err(format!(
-                        "server `{name}` uses unsupported transport `{other}`, only `stdio` and `remote` are supported"
-                    )
-                    .into())
-                }
+            let parsed = parse_server_entry(server, &name)?;
+            let (command, args) = match parsed.transport {
+                ParsedServerTransport::Stdio { command, args } => (command, args),
+                ParsedServerTransport::Remote { url, .. } => (url, Vec::new()),
             };
-
-            let enabled = parse_server_enabled(server, &name)?;
             let last_updated_at = read_cached_tools_timestamp(&name);
 
             Ok(super::ListedServer {
                 name,
                 command,
                 args,
-                enabled,
+                enabled: parsed.enabled,
                 last_updated_at,
             })
         })
@@ -299,61 +282,20 @@ pub fn configured_server(
     let server = servers[&resolved_name]
         .as_table()
         .ok_or_else(|| format!("server `{resolved_name}` must be a table"))?;
-
-    let transport = resolved_server_transport(server, &resolved_name)?;
-    let configured_transport = match transport {
-        "stdio" => {
-            let command = server
-                .get("command")
-                .and_then(Value::as_str)
-                .ok_or_else(|| format!("server `{resolved_name}` is missing `command`"))?
-                .to_string();
-
-            let args = server
-                .get("args")
-                .and_then(Value::as_array)
-                .map(|items| {
-                    items
-                        .iter()
-                        .map(|value| {
-                            value.as_str().map(ToOwned::to_owned).ok_or_else(|| {
-                                format!("server `{resolved_name}` contains a non-string arg")
-                            })
-                        })
-                        .collect::<Result<Vec<_>, _>>()
-                })
-                .transpose()?
-                .unwrap_or_default();
-
-            ConfiguredTransport::Stdio { command, args }
-        }
-        "remote" => {
-            let url = parse_remote_server_url(server, &resolved_name)?;
-            let headers =
-                parse_toml_string_table(server.get("headers"), "headers", "server", &resolved_name)?;
-            ConfiguredTransport::Remote {
-                url: url.to_string(),
-                headers,
-            }
-        }
-        other => {
-            return Err(format!(
-                "server `{resolved_name}` uses unsupported transport `{other}`, only `stdio` and `remote` are supported"
-            )
-            .into())
+    let parsed = parse_server_entry(server, &resolved_name)?;
+    let configured_transport = match parsed.transport {
+        ParsedServerTransport::Stdio { command, args } => ConfiguredTransport::Stdio { command, args },
+        ParsedServerTransport::Remote { url, headers } => {
+            ConfiguredTransport::Remote { url, headers }
         }
     };
-
-    let env = parse_toml_string_table(server.get("env"), "env", "server", &resolved_name)?;
-    let env_vars =
-        parse_toml_string_array(server.get("env_vars"), "env_vars", "server", &resolved_name)?;
 
     Ok((
         resolved_name,
         ConfiguredServer {
             transport: configured_transport,
-            env,
-            env_vars,
+            env: parsed.env,
+            env_vars: parsed.env_vars,
         },
     ))
 }
@@ -860,49 +802,64 @@ fn server_config_snapshot(
     resolved_name: &str,
     server: &Table,
 ) -> Result<ServerConfigSnapshot, Box<dyn Error>> {
-    let transport = resolved_server_transport(server, resolved_name)?;
-    let enabled = parse_server_enabled(server, resolved_name)?;
-    let env = parse_toml_string_table(server.get("env"), "env", "server", resolved_name)?;
-    let env_vars =
-        parse_toml_string_array(server.get("env_vars"), "env_vars", "server", resolved_name)?;
-    let (command, args, url, headers) = match transport {
-        "stdio" => (
-            Some(
-                server
-                    .get("command")
-                    .and_then(Value::as_str)
-                    .ok_or_else(|| format!("server `{resolved_name}` is missing `command`"))?
-                    .to_string(),
-            ),
-            parse_toml_string_array(server.get("args"), "args", "server", resolved_name)?,
-            None,
-            BTreeMap::new(),
-        ),
-        "remote" => (
-            None,
-            Vec::new(),
-            Some(parse_remote_server_url(server, resolved_name)?.to_string()),
-            parse_toml_string_table(server.get("headers"), "headers", "server", resolved_name)?,
-        ),
+    let parsed = parse_server_entry(server, resolved_name)?;
+    let (command, args, url, headers) = match parsed.transport {
+        ParsedServerTransport::Stdio { command, args } => {
+            (Some(command), args, None, BTreeMap::new())
+        }
+        ParsedServerTransport::Remote { url, headers } => (None, Vec::new(), Some(url), headers),
+    };
+
+    Ok(ServerConfigSnapshot {
+        name: resolved_name.to_string(),
+        transport: parsed.transport_name.to_string(),
+        enabled: parsed.enabled,
+        command,
+        args,
+        url,
+        headers,
+        env: parsed.env,
+        env_vars: parsed.env_vars,
+    })
+}
+
+fn parse_server_entry(server: &Table, name: &str) -> Result<ParsedServerEntry, Box<dyn Error>> {
+    let transport_name = resolved_server_transport(server, name)?;
+    let transport = match transport_name {
+        "stdio" => {
+            let (command, args) = parse_stdio_command(server, name)?;
+            ParsedServerTransport::Stdio { command, args }
+        }
+        "remote" => ParsedServerTransport::Remote {
+            url: parse_remote_server_url(server, name)?.to_string(),
+            headers: parse_toml_string_table(server.get("headers"), "headers", "server", name)?,
+        },
         other => {
             return Err(format!(
-                "server `{resolved_name}` uses unsupported transport `{other}`, only `stdio` and `remote` are supported"
+                "server `{name}` uses unsupported transport `{other}`, only `stdio` and `remote` are supported"
             )
             .into())
         }
     };
 
-    Ok(ServerConfigSnapshot {
-        name: resolved_name.to_string(),
-        transport: transport.to_string(),
-        enabled,
-        command,
-        args,
-        url,
-        headers,
-        env,
-        env_vars,
+    Ok(ParsedServerEntry {
+        transport_name,
+        transport,
+        enabled: parse_server_enabled(server, name)?,
+        env: parse_toml_string_table(server.get("env"), "env", "server", name)?,
+        env_vars: parse_toml_string_array(server.get("env_vars"), "env_vars", "server", name)?,
     })
+}
+
+fn parse_stdio_command(server: &Table, name: &str) -> Result<(String, Vec<String>), Box<dyn Error>> {
+    let command = server
+        .get("command")
+        .and_then(Value::as_str)
+        .ok_or_else(|| format!("server `{name}` is missing `command`"))?
+        .to_string();
+    let args = parse_toml_string_array(server.get("args"), "args", "server", name)?;
+
+    Ok((command, args))
 }
 
 fn has_server_name(config: &Table, name: &str) -> bool {

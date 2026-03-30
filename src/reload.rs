@@ -1,6 +1,5 @@
-use std::env;
 use std::error::Error;
-use std::fs::{self, File, OpenOptions};
+use std::fs;
 use std::path::{Path, PathBuf};
 
 use rmcp::model::Tool;
@@ -11,11 +10,9 @@ use crate::console::{
     ExternalOutputCapture, operation_error, print_external_command_failure_with_captured_stderr,
 };
 use crate::downstream_client::connect_stdio_client;
-use crate::paths::{cache_file_path, format_path_for_display, unix_epoch_ms};
-use crate::reload::summarizer::{
-    claude_workdir_path, codex_output_path, codex_workdir_path, non_empty_summary,
-    opencode_workdir_path, summarize_tools,
-};
+use crate::fs_util::{FileLockGuard, acquire_sibling_lock, write_file_atomically};
+use crate::paths::{cache_file_path, format_path_for_display, sibling_lock_path, unix_epoch_ms};
+use crate::reload::summarizer::summarize_tools;
 use crate::remote::connect_remote_client;
 use crate::types::{
     CachedTools, ConfiguredServer, ConfiguredTransport, ModelProviderConfig, ToolSnapshot,
@@ -294,75 +291,18 @@ fn serialize_tool_snapshots(tools: &[ToolSnapshot]) -> Result<String, Box<dyn Er
     })
 }
 
-struct ReloadLockGuard {
-    _file: File,
-}
-
-fn acquire_reload_lock(cache_path: &Path) -> Result<ReloadLockGuard, Box<dyn Error>> {
-    let lock_path = reload_lock_path(cache_path);
-    if let Some(parent) = lock_path.parent() {
-        fs::create_dir_all(parent).map_err(|error| {
-            operation_error(
-                "reload.lock.create_parent",
-                format!(
-                    "failed to create lock directory {}",
-                    format_path_for_display(parent)
-                ),
-                Box::new(error),
-            )
-        })?;
-    }
-
-    let file = OpenOptions::new()
-        .read(true)
-        .write(true)
-        .create(true)
-        .truncate(false)
-        .open(&lock_path)
-        .map_err(|error| {
-            operation_error(
-                "reload.lock.open",
-                format!(
-                    "failed to open lock file {}",
-                    format_path_for_display(&lock_path)
-                ),
-                Box::new(error),
-            )
-        })?;
-    file.lock().map_err(|error| {
+fn acquire_reload_lock(cache_path: &Path) -> Result<FileLockGuard, Box<dyn Error>> {
+    acquire_sibling_lock(cache_path).map_err(|error| {
+        let lock_path = sibling_lock_path(cache_path);
         operation_error(
-            "reload.lock.acquire",
+            "reload.lock",
             format!("failed to lock {}", format_path_for_display(&lock_path)),
             Box::new(error),
         )
-    })?;
-
-    Ok(ReloadLockGuard { _file: file })
-}
-
-fn reload_lock_path(cache_path: &Path) -> PathBuf {
-    let mut file_name = cache_path
-        .file_name()
-        .map(ToOwned::to_owned)
-        .unwrap_or_default();
-    file_name.push(".lock");
-    cache_path.with_file_name(file_name)
+    })
 }
 
 fn write_cache(path: &Path, payload: &CachedTools) -> Result<(), Box<dyn Error>> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(|error| {
-            operation_error(
-                "reload.write_cache.create_parent",
-                format!(
-                    "failed to create cache directory {}",
-                    format_path_for_display(parent)
-                ),
-                Box::new(error),
-            )
-        })?;
-    }
-
     let contents = serde_json::to_string_pretty(payload).map_err(|error| {
         operation_error(
             "reload.write_cache.serialize",
@@ -370,7 +310,7 @@ fn write_cache(path: &Path, payload: &CachedTools) -> Result<(), Box<dyn Error>>
             Box::new(error),
         )
     })?;
-    fs::write(path, contents).map_err(|error| {
+    write_file_atomically(path, contents.as_bytes()).map_err(|error| {
         operation_error(
             "reload.write_cache.write_file",
             format!(
@@ -387,10 +327,16 @@ fn write_cache(path: &Path, payload: &CachedTools) -> Result<(), Box<dyn Error>>
 mod tests {
     use super::*;
     use serde_json::json;
+    use std::env;
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::{Arc, mpsc};
     use std::thread;
     use std::time::Duration;
+
+    use crate::reload::summarizer::{
+        claude_workdir_path, codex_output_path, codex_workdir_path, non_empty_summary,
+        opencode_workdir_path,
+    };
 
     #[test]
     fn codex_output_path_is_created_in_temp_dir() {
@@ -459,7 +405,7 @@ mod tests {
         let cache_path = Path::new("/tmp/github.json");
 
         assert_eq!(
-            reload_lock_path(cache_path),
+            sibling_lock_path(cache_path),
             PathBuf::from("/tmp/github.json.lock")
         );
     }
@@ -470,7 +416,7 @@ mod tests {
             "mcp-smart-proxy-reload-lock-{}.json",
             unix_epoch_ms().unwrap()
         ));
-        let lock_path = reload_lock_path(&cache_path);
+        let lock_path = sibling_lock_path(&cache_path);
         let (locked_tx, locked_rx) = mpsc::channel();
         let (release_tx, release_rx) = mpsc::channel();
         let acquired = Arc::new(AtomicBool::new(false));

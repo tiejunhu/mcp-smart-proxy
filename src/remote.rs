@@ -14,8 +14,7 @@ use rmcp::{
         StreamableHttpClientTransport,
         auth::AuthError,
         common::http_header::{
-            EVENT_STREAM_MIME_TYPE, HEADER_LAST_EVENT_ID, HEADER_MCP_PROTOCOL_VERSION,
-            HEADER_SESSION_ID, JSON_MIME_TYPE,
+            EVENT_STREAM_MIME_TYPE, HEADER_LAST_EVENT_ID, HEADER_SESSION_ID, JSON_MIME_TYPE,
         },
         streamable_http_client::{
             StreamableHttpClient, StreamableHttpClientTransportConfig, StreamableHttpError,
@@ -36,7 +35,7 @@ mod store;
 
 use headers::{
     forbidden_response, is_reserved_header, parse_json_rpc_error, remote_target,
-    resolve_remote_headers, unauthorized_response,
+    unauthorized_response,
 };
 use oauth::RemoteAuth;
 
@@ -403,6 +402,9 @@ impl StreamableHttpClient for OAuthAwareHttpClient {
 mod tests {
     use super::*;
     use std::collections::{BTreeMap, HashMap};
+
+    use crate::remote::headers::resolve_remote_headers;
+    use rmcp::transport::common::http_header::HEADER_MCP_PROTOCOL_VERSION;
 
     #[test]
     fn runtime_headers_allow_negotiated_protocol_version() {
