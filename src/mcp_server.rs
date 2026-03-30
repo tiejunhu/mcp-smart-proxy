@@ -487,7 +487,7 @@ struct SmartProxyMcpServer {
     activate_tool_detail: Tool,
     call_tool_in_external_mcp: Tool,
     toolsets: Vec<CachedToolsetRecord>,
-    clients: Mutex<HashMap<String, ToolsetClient>>,
+    client_slots: HashMap<String, Arc<Mutex<Option<ToolsetClient>>>>,
 }
 
 impl SmartProxyMcpServer {
@@ -496,12 +496,16 @@ impl SmartProxyMcpServer {
         let activate_tool_detail = activate_external_mcp_tool_definition();
         let call_tool_in_external_mcp =
             call_tool_in_external_mcp_definition(CALL_TOOL_IN_EXTERNAL_MCP_NAME);
+        let client_slots = toolsets
+            .iter()
+            .map(|toolset| (toolset.name.clone(), Arc::new(Mutex::new(None))))
+            .collect();
         Self {
             activate_tool,
             activate_tool_detail,
             call_tool_in_external_mcp,
             toolsets,
-            clients: Mutex::new(HashMap::new()),
+            client_slots,
         }
     }
 
@@ -509,17 +513,22 @@ impl SmartProxyMcpServer {
         &self,
         toolset: &CachedToolsetRecord,
     ) -> Result<ToolsetClient, McpError> {
-        let mut clients = self.clients.lock().await;
+        let slot = self
+            .client_slots
+            .get(&toolset.name)
+            .cloned()
+            .ok_or_else(|| McpError::internal_error("missing client slot for toolset", None))?;
+        let mut client_guard = slot.lock().await;
 
-        if let Some(client) = clients.get(&toolset.name).cloned() {
+        if let Some(client) = client_guard.as_ref() {
             if !client.service.is_closed() {
-                return Ok(client);
+                return Ok(client.clone());
             }
-            clients.remove(&toolset.name);
+            *client_guard = None;
         }
 
         let client = connect_toolset_client(&toolset.name, &toolset.server).await?;
-        clients.insert(toolset.name.clone(), client.clone());
+        *client_guard = Some(client.clone());
         Ok(client)
     }
 }

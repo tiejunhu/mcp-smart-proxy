@@ -1,4 +1,3 @@
-use std::collections::BTreeMap;
 use std::error::Error;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
@@ -8,15 +7,9 @@ use clap::Parser;
 
 use crate::cli::{Cli, Command, ImportSource, InstallTarget, ProviderName};
 use crate::config::{
-    ImportPlan, InstallMcpServerResult, InstallMcpServerStatus, ReplaceMcpServersResult,
-    RestoreMcpServersResult, ServerConfigSnapshot, UpdateServerConfig, add_server,
-    contains_server_name, import_server, install_claude_mcp_server, install_codex_mcp_server,
-    install_opencode_mcp_server, list_servers, load_claude_servers_for_import,
-    load_codex_servers_for_import, load_config_table, load_model_provider_config,
-    load_opencode_servers_for_import, load_server_config, remove_server,
-    replace_claude_mcp_servers, replace_codex_mcp_servers, replace_opencode_mcp_servers,
-    restore_claude_mcp_servers, restore_codex_mcp_servers, restore_opencode_mcp_servers,
-    set_server_enabled, update_server_config,
+    InstallMcpServerResult, InstallMcpServerStatus, ReplaceMcpServersResult,
+    RestoreMcpServersResult, add_server, contains_server_name, import_server, list_servers,
+    load_config_table, load_server_config, remove_server, set_server_enabled, update_server_config,
 };
 use crate::console::{describe_command, operation_error, print_app_event};
 use crate::mcp_server;
@@ -26,19 +19,16 @@ use crate::remote::{login_remote_server, logout_remote_server};
 use crate::types::{ConfiguredTransport, ModelProviderConfig};
 use crate::version_check;
 
-type ImportPlanLoader = fn() -> Result<(PathBuf, ImportPlan), Box<dyn Error>>;
-type InstallFn = fn() -> Result<InstallMcpServerResult, Box<dyn Error>>;
-type ReplaceFn = fn() -> Result<ReplaceMcpServersResult, Box<dyn Error>>;
-type RestoreFn = fn() -> Result<RestoreMcpServersResult, Box<dyn Error>>;
+mod config_cmd;
+mod provider;
 
-struct ProviderHooks {
-    provider_name: &'static str,
-    import_source: ImportSource,
-    load_import_plan: ImportPlanLoader,
-    install_server: InstallFn,
-    replace_servers: ReplaceFn,
-    restore_servers: RestoreFn,
-}
+use config_cmd::{ConfigCommandArgs, print_server_config};
+use provider::{
+    ImportPlanLoader, import_stage, install_stage, missing_provider_error,
+    provider_hooks_for_import_source, provider_hooks_for_install_target,
+    resolve_default_command_provider, resolve_import_provider, resolve_install_import_provider,
+    restore_stage,
+};
 
 struct ImportExecutionResult {
     source_config_path: PathBuf,
@@ -89,21 +79,23 @@ pub async fn run() -> Result<(), Box<dyn Error>> {
         }) => run_config_command(
             &config_path,
             &name,
-            transport,
-            command,
-            args,
-            clear_args,
-            url,
-            enabled,
-            headers,
-            unset_headers,
-            clear_headers,
-            env,
-            unset_env,
-            clear_env,
-            env_vars,
-            unset_env_vars,
-            clear_env_vars,
+            ConfigCommandArgs {
+                transport,
+                command,
+                args,
+                clear_args,
+                url,
+                enabled,
+                headers,
+                unset_headers,
+                clear_headers,
+                env,
+                unset_env,
+                clear_env,
+                env_vars,
+                unset_env_vars,
+                clear_env_vars,
+            },
         )?,
         Some(Command::Import { provider, source }) => {
             run_import_command(&config_path, provider, source).await?
@@ -280,57 +272,18 @@ fn run_set_enabled_command(
     Ok(())
 }
 
-#[allow(clippy::too_many_arguments)]
 fn run_config_command(
     config_path: &Path,
     name: &str,
-    transport: Option<crate::cli::ServerTransport>,
-    command: Option<String>,
-    args: Vec<String>,
-    clear_args: bool,
-    url: Option<String>,
-    enabled: Option<bool>,
-    headers: Vec<String>,
-    unset_headers: Vec<String>,
-    clear_headers: bool,
-    env: Vec<String>,
-    unset_env: Vec<String>,
-    clear_env: bool,
-    env_vars: Vec<String>,
-    unset_env_vars: Vec<String>,
-    clear_env_vars: bool,
+    args: ConfigCommandArgs,
 ) -> Result<(), Box<dyn Error>> {
-    let set_headers = parse_key_value_assignments(&headers, "header").map_err(|error| {
+    let update = args.into_update_config(name).map_err(|error| {
         operation_error(
-            "cli.config.parse_headers",
-            format!("failed to parse `--header` values for server `{name}`"),
+            "cli.config.parse",
+            format!("failed to parse config update arguments for server `{name}`"),
             error,
         )
     })?;
-    let set_env = parse_key_value_assignments(&env, "env").map_err(|error| {
-        operation_error(
-            "cli.config.parse_env",
-            format!("failed to parse `--env` values for server `{name}`"),
-            error,
-        )
-    })?;
-    let update = UpdateServerConfig {
-        transport: transport.map(|value| value.as_str().to_string()),
-        command,
-        clear_args,
-        add_args: args,
-        url,
-        enabled,
-        clear_headers,
-        set_headers,
-        unset_headers,
-        clear_env,
-        set_env,
-        unset_env,
-        clear_env_vars,
-        add_env_vars: env_vars,
-        unset_env_vars,
-    };
 
     if update.has_changes() {
         let snapshot = update_server_config(config_path, name, &update).map_err(|error| {
@@ -925,85 +878,6 @@ fn print_import_details(stage: &'static str, result: &ImportExecutionResult) {
     }
 }
 
-fn provider_hooks_for_import_source(source: ImportSource) -> ProviderHooks {
-    match source {
-        ImportSource::Codex => provider_hooks("codex"),
-        ImportSource::Opencode => provider_hooks("opencode"),
-        ImportSource::Claude => provider_hooks("claude"),
-    }
-}
-
-fn provider_hooks_for_install_target(target: InstallTarget) -> ProviderHooks {
-    match target {
-        InstallTarget::Codex => provider_hooks("codex"),
-        InstallTarget::Opencode => provider_hooks("opencode"),
-        InstallTarget::Claude => provider_hooks("claude"),
-    }
-}
-
-fn provider_hooks(provider_name: &'static str) -> ProviderHooks {
-    match provider_name {
-        "codex" => ProviderHooks {
-            provider_name,
-            import_source: ImportSource::Codex,
-            load_import_plan: load_codex_servers_for_import,
-            install_server: install_codex_mcp_server,
-            replace_servers: replace_codex_mcp_servers,
-            restore_servers: restore_codex_mcp_servers,
-        },
-        "opencode" => ProviderHooks {
-            provider_name,
-            import_source: ImportSource::Opencode,
-            load_import_plan: load_opencode_servers_for_import,
-            install_server: install_opencode_mcp_server,
-            replace_servers: replace_opencode_mcp_servers,
-            restore_servers: restore_opencode_mcp_servers,
-        },
-        "claude" => ProviderHooks {
-            provider_name,
-            import_source: ImportSource::Claude,
-            load_import_plan: load_claude_servers_for_import,
-            install_server: install_claude_mcp_server,
-            replace_servers: replace_claude_mcp_servers,
-            restore_servers: restore_claude_mcp_servers,
-        },
-        _ => unreachable!(),
-    }
-}
-
-fn import_stage(provider_name: &'static str, suffix: &'static str) -> &'static str {
-    match (provider_name, suffix) {
-        ("codex", "load_provider") => "cli.import.codex.load_provider",
-        ("codex", "load_source") => "cli.import.codex.load_source",
-        ("codex", "run") => "cli.import.codex",
-        ("opencode", "load_provider") => "cli.import.opencode.load_provider",
-        ("opencode", "load_source") => "cli.import.opencode.load_source",
-        ("opencode", "run") => "cli.import.opencode",
-        ("claude", "load_provider") => "cli.import.claude.load_provider",
-        ("claude", "load_source") => "cli.import.claude.load_source",
-        ("claude", "run") => "cli.import.claude",
-        _ => unreachable!(),
-    }
-}
-
-fn install_stage(provider_name: &'static str) -> &'static str {
-    match provider_name {
-        "codex" => "cli.install.codex",
-        "opencode" => "cli.install.opencode",
-        "claude" => "cli.install.claude",
-        _ => unreachable!(),
-    }
-}
-
-fn restore_stage(provider_name: &'static str) -> &'static str {
-    match provider_name {
-        "codex" => "cli.restore.codex",
-        "opencode" => "cli.restore.opencode",
-        "claude" => "cli.restore.claude",
-        _ => unreachable!(),
-    }
-}
-
 fn format_last_updated(epoch_ms: Option<u128>) -> String {
     epoch_ms
         .and_then(format_local_timestamp)
@@ -1014,45 +888,6 @@ fn format_local_timestamp(epoch_ms: u128) -> Option<String> {
     let epoch_ms = i64::try_from(epoch_ms).ok()?;
     let datetime = Local.timestamp_millis_opt(epoch_ms).single()?;
     Some(datetime.format("%Y-%m-%d %H:%M:%S").to_string())
-}
-
-fn resolve_default_command_provider(
-    provider_override: Option<ProviderName>,
-) -> Result<ModelProviderConfig, Box<dyn Error>> {
-    let provider = provider_override.ok_or_else(|| {
-        "missing required `--provider`; supported providers are `codex`, `opencode`, and `claude`"
-            .to_string()
-    })?;
-    load_model_provider_config(provider.as_str())
-}
-
-fn resolve_import_provider(
-    provider_override: Option<ProviderName>,
-    source: ImportSource,
-) -> Result<ModelProviderConfig, Box<dyn Error>> {
-    match provider_override {
-        Some(provider) => load_model_provider_config(provider.as_str()),
-        None => load_model_provider_config(import_source_provider_name(source)),
-    }
-}
-
-fn resolve_install_import_provider(
-    source: ImportSource,
-) -> Result<ModelProviderConfig, Box<dyn Error>> {
-    load_model_provider_config(import_source_provider_name(source))
-}
-
-fn import_source_provider_name(source: ImportSource) -> &'static str {
-    match source {
-        ImportSource::Codex => "codex",
-        ImportSource::Opencode => "opencode",
-        ImportSource::Claude => "claude",
-    }
-}
-
-#[cfg(test)]
-fn missing_provider_error() -> &'static str {
-    "missing required `--provider`; supported providers are `codex`, `opencode`, and `claude`"
 }
 
 fn print_install_result(stage: &str, provider: &str, installed: &InstallMcpServerResult) {
@@ -1101,77 +936,6 @@ fn print_restore_result(stage: &str, provider: &str, restored: &RestoreMcpServer
     );
 
     print_app_event(stage, message);
-}
-
-fn print_server_config(stage: &str, config_path: &Path, snapshot: &ServerConfigSnapshot) {
-    print_app_event(
-        stage,
-        format!(
-            "Server `{}` in {}",
-            snapshot.name,
-            format_path_for_display(config_path)
-        ),
-    );
-    print_app_event(stage, format!("transport: {}", snapshot.transport));
-    print_app_event(stage, format!("enabled: {}", snapshot.enabled));
-    if let Some(command) = &snapshot.command {
-        print_app_event(stage, format!("command: {command}"));
-        if snapshot.args.is_empty() {
-            print_app_event(stage, "args: []");
-        } else {
-            print_app_event(stage, format!("args: [{}]", snapshot.args.join(", ")));
-        }
-    }
-    if let Some(url) = &snapshot.url {
-        print_app_event(stage, format!("url: {url}"));
-        if snapshot.headers.is_empty() {
-            print_app_event(stage, "headers: {}");
-        } else {
-            for (key, value) in &snapshot.headers {
-                print_app_event(stage, format!("headers.{key}: {value}"));
-            }
-        }
-    }
-    if snapshot.env.is_empty() {
-        print_app_event(stage, "env: {}");
-    } else {
-        for (key, value) in &snapshot.env {
-            print_app_event(stage, format!("env.{key}: {value}"));
-        }
-    }
-    if snapshot.env_vars.is_empty() {
-        print_app_event(stage, "env_vars: []");
-    } else {
-        print_app_event(
-            stage,
-            format!("env_vars: [{}]", snapshot.env_vars.join(", ")),
-        );
-    }
-}
-
-fn parse_key_value_assignments(
-    assignments: &[String],
-    flag_name: &str,
-) -> Result<BTreeMap<String, String>, Box<dyn Error>> {
-    let mut env = BTreeMap::new();
-
-    for assignment in assignments {
-        let Some((key, value)) = assignment.split_once('=') else {
-            return Err(format!(
-                "invalid {flag_name} assignment `{assignment}`; expected `KEY=VALUE`"
-            )
-            .into());
-        };
-        if key.is_empty() {
-            return Err(format!(
-                "invalid {flag_name} assignment `{assignment}`; key must not be empty"
-            )
-            .into());
-        }
-        env.insert(key.to_string(), value.to_string());
-    }
-
-    Ok(env)
 }
 
 #[cfg(test)]
@@ -1236,36 +1000,5 @@ mod tests {
         let provider = resolve_install_import_provider(ImportSource::Claude).unwrap();
 
         assert!(matches!(provider, ModelProviderConfig::Claude(_)));
-    }
-
-    #[test]
-    fn parses_env_assignments_into_sorted_map() {
-        let env = parse_key_value_assignments(
-            &[
-                "B=two".to_string(),
-                "A=one".to_string(),
-                "B=override".to_string(),
-            ],
-            "env",
-        )
-        .unwrap();
-
-        assert_eq!(
-            env,
-            BTreeMap::from([
-                ("A".to_string(), "one".to_string()),
-                ("B".to_string(), "override".to_string()),
-            ])
-        );
-    }
-
-    #[test]
-    fn rejects_invalid_env_assignment() {
-        let error = parse_key_value_assignments(&["INVALID".to_string()], "env").unwrap_err();
-
-        assert_eq!(
-            error.to_string(),
-            "invalid env assignment `INVALID`; expected `KEY=VALUE`"
-        );
     }
 }
