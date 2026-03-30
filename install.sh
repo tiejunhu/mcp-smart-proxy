@@ -5,6 +5,7 @@ set -euo pipefail
 readonly REPOSITORY="${REPOSITORY:-cybershape/mcp-smart-proxy}"
 readonly BINARY_NAME="msp"
 readonly RELEASES_BASE="https://github.com/${REPOSITORY}/releases"
+temp_dir=""
 
 log() {
   printf '%s\n' "$*"
@@ -173,6 +174,12 @@ path_contains_dir() {
   return 1
 }
 
+cleanup() {
+  if [[ -n "${temp_dir:-}" ]]; then
+    rm -rf -- "$temp_dir"
+  fi
+}
+
 main() {
   need_cmd tar
   need_cmd mktemp
@@ -206,9 +213,7 @@ main() {
   local download_url
   download_url="$(release_asset_url "$release_tag" "$asset_name")"
 
-  local temp_dir
   temp_dir="$(mktemp -d)"
-  trap 'rm -rf -- "$temp_dir"' EXIT
 
   local archive_path
   archive_path="${temp_dir}/${asset_name}"
@@ -230,5 +235,7 @@ main() {
     log "Add it to your shell profile before running ${BINARY_NAME} without the full path"
   fi
 }
+
+trap cleanup EXIT
 
 main "$@"

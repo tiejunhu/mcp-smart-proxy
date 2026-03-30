@@ -150,27 +150,19 @@ pub fn describe_command(command: &str, args: &[String]) -> String {
 }
 
 pub fn print_external_command_failure(stage: &str, label: &str, command_line: &str, status: &str) {
-    eprintln!(
-        "{}",
-        format_external_command_failure_block(stage, label, command_line, status)
-    );
+    print_external_command_failure_with_output(stage, label, command_line, status, &[]);
 }
 
-pub fn print_external_output_block(
+pub fn print_external_command_failure_with_output(
     stage: &str,
     label: &str,
     command_line: &str,
-    stream: &str,
-    content: &str,
+    status: &str,
+    streams: &[(&str, &str)],
 ) {
-    let trimmed = content.trim();
-    if trimmed.is_empty() {
-        return;
-    }
-
     eprintln!(
         "{}",
-        format_external_output_block(stage, label, command_line, stream, trimmed)
+        format_external_command_failure_block(stage, label, command_line, status, streams)
     );
 }
 
@@ -202,14 +194,20 @@ pub fn spawn_stderr_collector(
     });
 }
 
-pub async fn print_external_output_if_present(
+pub async fn print_external_command_failure_with_captured_stderr(
     stage: &str,
     label: &str,
     command_line: &str,
-    stream: &str,
+    status: &str,
     content: &str,
 ) {
-    print_external_output_block(stage, label, command_line, stream, content);
+    print_external_command_failure_with_output(
+        stage,
+        label,
+        command_line,
+        status,
+        &[("stderr", content)],
+    );
 }
 
 fn deepest_operation_error<'a>(mut error: &'a (dyn Error + 'static)) -> Option<&'a OperationError> {
@@ -268,35 +266,30 @@ fn format_external_command_failure_block(
     label: &str,
     command_line: &str,
     status: &str,
+    streams: &[(&str, &str)],
 ) -> String {
-    [
+    let mut lines = vec![
         "external command failure:".to_string(),
         format!("stage: {}", render_inline_value(stage)),
         format!("target: {}", render_inline_value(label)),
         format!("command: {}", render_inline_value(command_line)),
         format!("status: {}", render_inline_value(status)),
-    ]
-    .join("\n")
-}
-
-fn format_external_output_block(
-    stage: &str,
-    label: &str,
-    command_line: &str,
-    stream: &str,
-    content: &str,
-) -> String {
-    let mut lines = vec![
-        "external command output:".to_string(),
-        format!("stage: {}", render_inline_value(stage)),
-        format!("target: {}", render_inline_value(label)),
-        format!("command: {}", render_inline_value(command_line)),
-        format!("stream: {}", render_inline_value(stream)),
-        format!("----- {} begin -----", render_inline_value(stream)),
     ];
 
-    lines.extend(content.lines().map(render_inline_value));
-    lines.push(format!("----- {} end -----", render_inline_value(stream)));
+    for (stream, content) in streams {
+        let trimmed = content.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        lines.push(format!(
+            "stream: external command {}",
+            render_inline_value(stream)
+        ));
+        lines.push(format!("----- {} begin -----", render_inline_value(stream)));
+        lines.extend(trimmed.lines().map(render_inline_value));
+        lines.push(format!("----- {} end -----", render_inline_value(stream)));
+    }
+
     lines.join("\n")
 }
 
@@ -391,6 +384,7 @@ mod tests {
             "github",
             "npx -y @modelcontextprotocol/server-github",
             "list-tools-failed",
+            &[],
         );
 
         assert_eq!(
@@ -400,18 +394,34 @@ mod tests {
     }
 
     #[test]
-    fn formats_external_output_as_labeled_block() {
-        let block = format_external_output_block(
+    fn formats_external_command_failure_with_stderr_block() {
+        let block = format_external_command_failure_block(
             "reload.fetch_tools",
             "github",
             "npx -y @modelcontextprotocol/server-github",
-            "stderr",
-            "GitHub token is missing",
+            "list-tools-failed",
+            &[("stderr", "GitHub token is missing")],
         );
 
         assert_eq!(
             block,
-            "external command output:\nstage: reload.fetch_tools\ntarget: github\ncommand: npx -y @modelcontextprotocol/server-github\nstream: stderr\n----- stderr begin -----\nGitHub token is missing\n----- stderr end -----"
+            "external command failure:\nstage: reload.fetch_tools\ntarget: github\ncommand: npx -y @modelcontextprotocol/server-github\nstatus: list-tools-failed\nstream: external command stderr\n----- stderr begin -----\nGitHub token is missing\n----- stderr end -----"
+        );
+    }
+
+    #[test]
+    fn skips_empty_external_output_streams_in_failure_block() {
+        let block = format_external_command_failure_block(
+            "reload.fetch_tools",
+            "github",
+            "npx -y @modelcontextprotocol/server-github",
+            "list-tools-failed",
+            &[("stderr", "   ")],
+        );
+
+        assert_eq!(
+            block,
+            "external command failure:\nstage: reload.fetch_tools\ntarget: github\ncommand: npx -y @modelcontextprotocol/server-github\nstatus: list-tools-failed"
         );
     }
 }

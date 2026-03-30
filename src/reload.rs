@@ -14,10 +14,10 @@ use tokio::io::AsyncWriteExt;
 use crate::config::{configured_server, load_config_table, load_model_provider_config};
 use crate::console::{
     ExternalOutputCapture, ExternalOutputRouter, describe_command, message_error, operation_error,
-    print_external_command_failure, print_external_output_block, print_external_output_if_present,
-    spawn_stderr_collector,
+    print_external_command_failure, print_external_command_failure_with_captured_stderr,
+    print_external_command_failure_with_output, spawn_stderr_collector,
 };
-use crate::paths::{cache_file_path, unix_epoch_ms};
+use crate::paths::{cache_file_path, format_path_for_display, unix_epoch_ms};
 use crate::remote::connect_remote_client;
 use crate::types::{
     CachedTools, ClaudeRuntimeConfig, CodexRuntimeConfig, ConfiguredServer, ConfiguredTransport,
@@ -56,7 +56,10 @@ async fn reload_server_with_resolved_provider(
     let config = load_config_table(config_path).map_err(|error| {
         operation_error(
             "reload.load_config",
-            format!("failed to load config from {}", config_path.display()),
+            format!(
+                "failed to load config from {}",
+                format_path_for_display(config_path)
+            ),
             error,
         )
     })?;
@@ -129,7 +132,10 @@ async fn reload_server_with_resolved_provider(
     write_cache(&cache_path, &payload).map_err(|error| {
         operation_error(
             "reload.write_cache",
-            format!("failed to write cached tools into {}", cache_path.display()),
+            format!(
+                "failed to write cached tools into {}",
+                format_path_for_display(&cache_path)
+            ),
             error,
         )
     })?;
@@ -320,7 +326,10 @@ async fn summarize_tools_with_codex(
     fs::create_dir(&workdir).map_err(|error| {
         operation_error(
             "reload.summarize_tools.codex.create_workdir",
-            format!("failed to create temporary workdir {}", workdir.display()),
+            format!(
+                "failed to create temporary workdir {}",
+                format_path_for_display(&workdir)
+            ),
             Box::new(error),
         )
     })?;
@@ -389,18 +398,12 @@ async fn summarize_tools_with_codex(
         )
     })?;
     if !output.status.success() {
-        print_external_command_failure(
+        print_external_command_failure_with_output(
             "reload.summarize_tools.codex",
             "codex",
             &command_line,
             &output.status.to_string(),
-        );
-        print_external_output_block(
-            "reload.summarize_tools.codex",
-            "codex",
-            &command_line,
-            "stderr",
-            &String::from_utf8_lossy(&output.stderr),
+            &[("stderr", String::from_utf8_lossy(&output.stderr).as_ref())],
         );
         let _ = fs::remove_file(&output_path);
         let _ = fs::remove_dir(&workdir);
@@ -409,7 +412,7 @@ async fn summarize_tools_with_codex(
             format!(
                 "`codex exec` exited unsuccessfully while summarizing tools; status={}, output_path={}",
                 output.status,
-                output_path.display()
+                format_path_for_display(&output_path)
             ),
         ));
     }
@@ -419,7 +422,7 @@ async fn summarize_tools_with_codex(
             "reload.summarize_tools.codex.read_output",
             format!(
                 "failed to read summary output from {}",
-                output_path.display()
+                format_path_for_display(&output_path)
             ),
             Box::new(error),
         )
@@ -443,7 +446,10 @@ async fn summarize_tools_with_opencode(
     fs::create_dir(&workdir).map_err(|error| {
         operation_error(
             "reload.summarize_tools.opencode.create_workdir",
-            format!("failed to create temporary workdir {}", workdir.display()),
+            format!(
+                "failed to create temporary workdir {}",
+                format_path_for_display(&workdir)
+            ),
             Box::new(error),
         )
     })?;
@@ -484,25 +490,14 @@ async fn summarize_tools_with_opencode(
         })?;
 
     if !output.status.success() {
-        print_external_command_failure(
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        print_external_command_failure_with_output(
             "reload.summarize_tools.opencode",
             "opencode",
             &command_line,
             &output.status.to_string(),
-        );
-        print_external_output_block(
-            "reload.summarize_tools.opencode",
-            "opencode",
-            &command_line,
-            "stdout",
-            &String::from_utf8_lossy(&output.stdout),
-        );
-        print_external_output_block(
-            "reload.summarize_tools.opencode",
-            "opencode",
-            &command_line,
-            "stderr",
-            &String::from_utf8_lossy(&output.stderr),
+            &[("stdout", stdout.as_ref()), ("stderr", stderr.as_ref())],
         );
         let _ = fs::remove_dir(&workdir);
         return Err(message_error(
@@ -529,9 +524,15 @@ async fn print_external_command_failure_async(
     status: &str,
     stderr_capture: ExternalOutputCapture,
 ) {
-    print_external_command_failure(stage, label, command_line, status);
     let content = stderr_capture.finish().await;
-    print_external_output_if_present(stage, label, command_line, "stderr", &content).await;
+    print_external_command_failure_with_captured_stderr(
+        stage,
+        label,
+        command_line,
+        status,
+        &content,
+    )
+    .await;
 }
 
 fn codex_output_path() -> Result<PathBuf, Box<dyn Error>> {
@@ -572,7 +573,10 @@ async fn summarize_tools_with_claude(
     fs::create_dir(&workdir).map_err(|error| {
         operation_error(
             "reload.summarize_tools.claude.create_workdir",
-            format!("failed to create temporary workdir {}", workdir.display()),
+            format!(
+                "failed to create temporary workdir {}",
+                format_path_for_display(&workdir)
+            ),
             Box::new(error),
         )
     })?;
@@ -614,25 +618,14 @@ async fn summarize_tools_with_claude(
         })?;
 
     if !output.status.success() {
-        print_external_command_failure(
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        print_external_command_failure_with_output(
             "reload.summarize_tools.claude",
             "claude",
             &command_line,
             &output.status.to_string(),
-        );
-        print_external_output_block(
-            "reload.summarize_tools.claude",
-            "claude",
-            &command_line,
-            "stdout",
-            &String::from_utf8_lossy(&output.stdout),
-        );
-        print_external_output_block(
-            "reload.summarize_tools.claude",
-            "claude",
-            &command_line,
-            "stderr",
-            &String::from_utf8_lossy(&output.stderr),
+            &[("stdout", stdout.as_ref()), ("stderr", stderr.as_ref())],
         );
         let _ = fs::remove_dir(&workdir);
         return Err(message_error(
@@ -686,7 +679,10 @@ fn read_cached_tools(path: &Path) -> Result<CachedTools, Box<dyn Error>> {
     let contents = fs::read_to_string(path).map_err(|error| {
         operation_error(
             "reload.read_cache.read_file",
-            format!("failed to read cache file {}", path.display()),
+            format!(
+                "failed to read cache file {}",
+                format_path_for_display(path)
+            ),
             Box::new(error),
         )
     })?;
@@ -694,7 +690,10 @@ fn read_cached_tools(path: &Path) -> Result<CachedTools, Box<dyn Error>> {
     serde_json::from_str(&contents).map_err(|error| {
         operation_error(
             "reload.read_cache.deserialize",
-            format!("failed to deserialize cache file {}", path.display()),
+            format!(
+                "failed to deserialize cache file {}",
+                format_path_for_display(path)
+            ),
             Box::new(error),
         )
     })
@@ -720,7 +719,10 @@ fn acquire_reload_lock(cache_path: &Path) -> Result<ReloadLockGuard, Box<dyn Err
         fs::create_dir_all(parent).map_err(|error| {
             operation_error(
                 "reload.lock.create_parent",
-                format!("failed to create lock directory {}", parent.display()),
+                format!(
+                    "failed to create lock directory {}",
+                    format_path_for_display(parent)
+                ),
                 Box::new(error),
             )
         })?;
@@ -735,14 +737,17 @@ fn acquire_reload_lock(cache_path: &Path) -> Result<ReloadLockGuard, Box<dyn Err
         .map_err(|error| {
             operation_error(
                 "reload.lock.open",
-                format!("failed to open lock file {}", lock_path.display()),
+                format!(
+                    "failed to open lock file {}",
+                    format_path_for_display(&lock_path)
+                ),
                 Box::new(error),
             )
         })?;
     file.lock().map_err(|error| {
         operation_error(
             "reload.lock.acquire",
-            format!("failed to lock {}", lock_path.display()),
+            format!("failed to lock {}", format_path_for_display(&lock_path)),
             Box::new(error),
         )
     })?;
@@ -764,7 +769,10 @@ fn write_cache(path: &Path, payload: &CachedTools) -> Result<(), Box<dyn Error>>
         fs::create_dir_all(parent).map_err(|error| {
             operation_error(
                 "reload.write_cache.create_parent",
-                format!("failed to create cache directory {}", parent.display()),
+                format!(
+                    "failed to create cache directory {}",
+                    format_path_for_display(parent)
+                ),
                 Box::new(error),
             )
         })?;
@@ -780,7 +788,10 @@ fn write_cache(path: &Path, payload: &CachedTools) -> Result<(), Box<dyn Error>>
     fs::write(path, contents).map_err(|error| {
         operation_error(
             "reload.write_cache.write_file",
-            format!("failed to write cache file {}", path.display()),
+            format!(
+                "failed to write cache file {}",
+                format_path_for_display(path)
+            ),
             Box::new(error),
         )
     })?;

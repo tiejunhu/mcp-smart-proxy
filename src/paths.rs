@@ -23,6 +23,13 @@ pub fn home_dir() -> Result<PathBuf, Box<dyn Error>> {
         .ok_or_else(|| "HOME is not set".into())
 }
 
+pub fn format_path_for_display(path: &Path) -> String {
+    match home_dir() {
+        Ok(home) => format_path_for_display_from_home(&home, path),
+        Err(_) => path.display().to_string(),
+    }
+}
+
 pub fn cache_file_path(server_name: &str) -> Result<PathBuf, Box<dyn Error>> {
     cache_file_path_from_home(&home_dir()?, server_name)
 }
@@ -109,6 +116,22 @@ pub fn unix_epoch_ms() -> Result<u128, Box<dyn Error>> {
     Ok(SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis())
 }
 
+fn format_path_for_display_from_home(home: &Path, path: &Path) -> String {
+    if path == home {
+        return "~".to_string();
+    }
+
+    if let Ok(relative_path) = path.strip_prefix(home) {
+        if relative_path.as_os_str().is_empty() {
+            return "~".to_string();
+        }
+
+        return format!("~/{}", relative_path.display());
+    }
+
+    path.display().to_string()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -169,5 +192,32 @@ mod tests {
         let path = sibling_lock_path(Path::new("/tmp/version.json"));
 
         assert_eq!(path, PathBuf::from("/tmp/version.json.lock"));
+    }
+
+    #[test]
+    fn formats_home_subpath_for_display() {
+        let home = PathBuf::from("/Users/example");
+
+        assert_eq!(
+            format_path_for_display_from_home(&home, Path::new("/Users/example/.config/test.toml")),
+            "~/.config/test.toml"
+        );
+    }
+
+    #[test]
+    fn formats_home_root_for_display() {
+        let home = PathBuf::from("/Users/example");
+
+        assert_eq!(format_path_for_display_from_home(&home, &home), "~");
+    }
+
+    #[test]
+    fn keeps_non_home_path_for_display() {
+        let home = PathBuf::from("/Users/example");
+
+        assert_eq!(
+            format_path_for_display_from_home(&home, Path::new("/tmp/test.toml")),
+            "/tmp/test.toml"
+        );
     }
 }

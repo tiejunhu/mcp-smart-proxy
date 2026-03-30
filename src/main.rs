@@ -27,7 +27,7 @@ use config::{
     set_server_enabled, update_server_config,
 };
 use console::{describe_command, operation_error, print_app_error, print_app_event};
-use paths::expand_tilde;
+use paths::{expand_tilde, format_path_for_display};
 use reload::reload_server_with_provider;
 use remote::{login_remote_server, logout_remote_server};
 use types::{ConfiguredTransport, ModelProviderConfig};
@@ -72,7 +72,7 @@ async fn run() -> Result<(), Box<dyn Error>> {
                     "cli.add",
                     format!(
                         "failed to add MCP server `{name}` into {}",
-                        config_path.display()
+                        format_path_for_display(&config_path)
                     ),
                     error,
                 )
@@ -91,7 +91,7 @@ async fn run() -> Result<(), Box<dyn Error>> {
                             "cli.add.rollback",
                             format!(
                                 "failed to roll back newly added MCP server `{server_name}` in {} after reload failure",
-                                config_path.display()
+                                format_path_for_display(&config_path)
                             ),
                             rollback_error,
                         )
@@ -107,8 +107,8 @@ async fn run() -> Result<(), Box<dyn Error>> {
                 "cli.add",
                 format!(
                     "Added MCP server `{server_name}` to {} and reloaded cached tools into {}",
-                    config_path.display(),
-                    reload_result.cache_path.display()
+                    format_path_for_display(&config_path),
+                    format_path_for_display(&reload_result.cache_path)
                 ),
             );
         }
@@ -116,7 +116,10 @@ async fn run() -> Result<(), Box<dyn Error>> {
             let servers = list_servers(&config_path).map_err(|error| {
                 operation_error(
                     "cli.list",
-                    format!("failed to list MCP servers from {}", config_path.display()),
+                    format!(
+                        "failed to list MCP servers from {}",
+                        format_path_for_display(&config_path)
+                    ),
                     error,
                 )
             })?;
@@ -128,7 +131,7 @@ async fn run() -> Result<(), Box<dyn Error>> {
                 format!(
                     "Configured {} MCP server(s) in {} ({} enabled, {} disabled)",
                     servers.len(),
-                    config_path.display(),
+                    format_path_for_display(&config_path),
                     enabled_count,
                     disabled_count
                 ),
@@ -157,7 +160,7 @@ async fn run() -> Result<(), Box<dyn Error>> {
                     "cli.enable",
                     format!(
                         "failed to enable MCP server `{name}` in {}",
-                        config_path.display()
+                        format_path_for_display(&config_path)
                     ),
                     error,
                 )
@@ -168,7 +171,7 @@ async fn run() -> Result<(), Box<dyn Error>> {
                 format!(
                     "Enabled MCP server `{}` in {}",
                     result.name,
-                    config_path.display()
+                    format_path_for_display(&config_path)
                 ),
             );
         }
@@ -178,7 +181,7 @@ async fn run() -> Result<(), Box<dyn Error>> {
                     "cli.disable",
                     format!(
                         "failed to disable MCP server `{name}` in {}",
-                        config_path.display()
+                        format_path_for_display(&config_path)
                     ),
                     error,
                 )
@@ -189,7 +192,7 @@ async fn run() -> Result<(), Box<dyn Error>> {
                 format!(
                     "Disabled MCP server `{}` in {}",
                     result.name,
-                    config_path.display()
+                    format_path_for_display(&config_path)
                 ),
             );
         }
@@ -250,7 +253,7 @@ async fn run() -> Result<(), Box<dyn Error>> {
                             "cli.config.update",
                             format!(
                                 "failed to update MCP server `{name}` in {}",
-                                config_path.display()
+                                format_path_for_display(&config_path)
                             ),
                             error,
                         )
@@ -262,7 +265,7 @@ async fn run() -> Result<(), Box<dyn Error>> {
                         "cli.config.read",
                         format!(
                             "failed to read MCP server `{name}` from {}",
-                            config_path.display()
+                            format_path_for_display(&config_path)
                         ),
                         error,
                     )
@@ -277,7 +280,10 @@ async fn run() -> Result<(), Box<dyn Error>> {
             let mut config = load_config_table(&config_path).map_err(|error| {
                 operation_error(
                     "cli.import.codex.load_config",
-                    format!("failed to load config from {}", config_path.display()),
+                    format!(
+                        "failed to load config from {}",
+                        format_path_for_display(&config_path)
+                    ),
                     error,
                 )
             })?;
@@ -287,7 +293,7 @@ async fn run() -> Result<(), Box<dyn Error>> {
                         "cli.import.codex.load_provider",
                         format!(
                             "failed to load the provider configuration before importing into {}",
-                            config_path.display()
+                            format_path_for_display(&config_path)
                         ),
                         error,
                     )
@@ -315,8 +321,8 @@ async fn run() -> Result<(), Box<dyn Error>> {
                         format!(
                             "failed to import MCP server `{}` from {} into {}",
                             server.name,
-                            codex_config_path.display(),
-                            config_path.display()
+                            format_path_for_display(&codex_config_path),
+                            format_path_for_display(&config_path)
                         ),
                         error,
                     )
@@ -333,14 +339,14 @@ async fn run() -> Result<(), Box<dyn Error>> {
                             "cli.import.codex.reload",
                             format!(
                                 "failed to reload imported MCP server `{server_name}` from {}",
-                                codex_config_path.display()
+                                format_path_for_display(&codex_config_path)
                             ),
                             error,
                         )
                     })?;
                     imported_servers.push(format!(
                         "Imported `{server_name}` [enabled] and cached tools at {}",
-                        reload_result.cache_path.display()
+                        format_path_for_display(&reload_result.cache_path)
                     ));
                 } else {
                     imported_servers.push(format!(
@@ -350,7 +356,10 @@ async fn run() -> Result<(), Box<dyn Error>> {
                 config = load_config_table(&config_path).map_err(|error| {
                     operation_error(
                         "cli.import.codex.refresh_config",
-                        format!("failed to refresh config from {}", config_path.display()),
+                        format!(
+                            "failed to refresh config from {}",
+                            format_path_for_display(&config_path)
+                        ),
                         error,
                     )
                 })?;
@@ -361,8 +370,8 @@ async fn run() -> Result<(), Box<dyn Error>> {
                 format!(
                     "Imported {} MCP server(s) from {} into {}",
                     imported_servers.len(),
-                    codex_config_path.display(),
-                    config_path.display()
+                    format_path_for_display(&codex_config_path),
+                    format_path_for_display(&config_path)
                 ),
             );
             for message in imported_servers {
@@ -388,7 +397,10 @@ async fn run() -> Result<(), Box<dyn Error>> {
             let mut config = load_config_table(&config_path).map_err(|error| {
                 operation_error(
                     "cli.import.opencode.load_config",
-                    format!("failed to load config from {}", config_path.display()),
+                    format!(
+                        "failed to load config from {}",
+                        format_path_for_display(&config_path)
+                    ),
                     error,
                 )
             })?;
@@ -398,7 +410,7 @@ async fn run() -> Result<(), Box<dyn Error>> {
                         "cli.import.opencode.load_provider",
                         format!(
                             "failed to load the provider configuration before importing into {}",
-                            config_path.display()
+                            format_path_for_display(&config_path)
                         ),
                         error,
                     )
@@ -426,8 +438,8 @@ async fn run() -> Result<(), Box<dyn Error>> {
                         format!(
                             "failed to import MCP server `{}` from {} into {}",
                             server.name,
-                            opencode_config_path.display(),
-                            config_path.display()
+                            format_path_for_display(&opencode_config_path),
+                            format_path_for_display(&config_path)
                         ),
                         error,
                     )
@@ -444,14 +456,14 @@ async fn run() -> Result<(), Box<dyn Error>> {
                             "cli.import.opencode.reload",
                             format!(
                                 "failed to reload imported MCP server `{server_name}` from {}",
-                                opencode_config_path.display()
+                                format_path_for_display(&opencode_config_path)
                             ),
                             error,
                         )
                     })?;
                     imported_servers.push(format!(
                         "Imported `{server_name}` [enabled] and cached tools at {}",
-                        reload_result.cache_path.display()
+                        format_path_for_display(&reload_result.cache_path)
                     ));
                 } else {
                     imported_servers.push(format!(
@@ -461,7 +473,10 @@ async fn run() -> Result<(), Box<dyn Error>> {
                 config = load_config_table(&config_path).map_err(|error| {
                     operation_error(
                         "cli.import.opencode.refresh_config",
-                        format!("failed to refresh config from {}", config_path.display()),
+                        format!(
+                            "failed to refresh config from {}",
+                            format_path_for_display(&config_path)
+                        ),
                         error,
                     )
                 })?;
@@ -472,8 +487,8 @@ async fn run() -> Result<(), Box<dyn Error>> {
                 format!(
                     "Imported {} MCP server(s) from {} into {}",
                     imported_servers.len(),
-                    opencode_config_path.display(),
-                    config_path.display()
+                    format_path_for_display(&opencode_config_path),
+                    format_path_for_display(&config_path)
                 ),
             );
             for message in imported_servers {
@@ -499,7 +514,10 @@ async fn run() -> Result<(), Box<dyn Error>> {
             let mut config = load_config_table(&config_path).map_err(|error| {
                 operation_error(
                     "cli.import.claude.load_config",
-                    format!("failed to load config from {}", config_path.display()),
+                    format!(
+                        "failed to load config from {}",
+                        format_path_for_display(&config_path)
+                    ),
                     error,
                 )
             })?;
@@ -509,7 +527,7 @@ async fn run() -> Result<(), Box<dyn Error>> {
                         "cli.import.claude.load_provider",
                         format!(
                             "failed to load the provider configuration before importing into {}",
-                            config_path.display()
+                            format_path_for_display(&config_path)
                         ),
                         error,
                     )
@@ -537,8 +555,8 @@ async fn run() -> Result<(), Box<dyn Error>> {
                         format!(
                             "failed to import MCP server `{}` from {} into {}",
                             server.name,
-                            claude_config_path.display(),
-                            config_path.display()
+                            format_path_for_display(&claude_config_path),
+                            format_path_for_display(&config_path)
                         ),
                         error,
                     )
@@ -555,14 +573,14 @@ async fn run() -> Result<(), Box<dyn Error>> {
                             "cli.import.claude.reload",
                             format!(
                                 "failed to reload imported MCP server `{server_name}` from {}",
-                                claude_config_path.display()
+                                format_path_for_display(&claude_config_path)
                             ),
                             error,
                         )
                     })?;
                     imported_servers.push(format!(
                         "Imported `{server_name}` [enabled] and cached tools at {}",
-                        reload_result.cache_path.display()
+                        format_path_for_display(&reload_result.cache_path)
                     ));
                 } else {
                     imported_servers.push(format!(
@@ -572,7 +590,10 @@ async fn run() -> Result<(), Box<dyn Error>> {
                 config = load_config_table(&config_path).map_err(|error| {
                     operation_error(
                         "cli.import.claude.refresh_config",
-                        format!("failed to refresh config from {}", config_path.display()),
+                        format!(
+                            "failed to refresh config from {}",
+                            format_path_for_display(&config_path)
+                        ),
                         error,
                     )
                 })?;
@@ -583,8 +604,8 @@ async fn run() -> Result<(), Box<dyn Error>> {
                 format!(
                     "Imported {} MCP server(s) from {} into {}",
                     imported_servers.len(),
-                    claude_config_path.display(),
-                    config_path.display()
+                    format_path_for_display(&claude_config_path),
+                    format_path_for_display(&config_path)
                 ),
             );
             for message in imported_servers {
@@ -723,16 +744,22 @@ async fn run() -> Result<(), Box<dyn Error>> {
                     "cli.remove",
                     format!(
                         "failed to remove MCP server `{name}` from {}",
-                        config_path.display()
+                        format_path_for_display(&config_path)
                     ),
                     error,
                 )
             })?;
 
             let cache_message = if removed.cache_deleted {
-                format!("deleted cache {}", removed.cache_path.display())
+                format!(
+                    "deleted cache {}",
+                    format_path_for_display(&removed.cache_path)
+                )
             } else {
-                format!("cache not found at {}", removed.cache_path.display())
+                format!(
+                    "cache not found at {}",
+                    format_path_for_display(&removed.cache_path)
+                )
             };
 
             print_app_event(
@@ -740,7 +767,7 @@ async fn run() -> Result<(), Box<dyn Error>> {
                 format!(
                     "Removed MCP server `{}` from {}; cache: {}",
                     removed.name,
-                    config_path.display(),
+                    format_path_for_display(&config_path),
                     cache_message
                 ),
             );
@@ -749,7 +776,10 @@ async fn run() -> Result<(), Box<dyn Error>> {
             let config = load_config_table(&config_path).map_err(|error| {
                 operation_error(
                     "cli.login.load_config",
-                    format!("failed to load config from {}", config_path.display()),
+                    format!(
+                        "failed to load config from {}",
+                        format_path_for_display(&config_path)
+                    ),
                     error,
                 )
             })?;
@@ -787,7 +817,10 @@ async fn run() -> Result<(), Box<dyn Error>> {
             let config = load_config_table(&config_path).map_err(|error| {
                 operation_error(
                     "cli.logout.load_config",
-                    format!("failed to load config from {}", config_path.display()),
+                    format!(
+                        "failed to load config from {}",
+                        format_path_for_display(&config_path)
+                    ),
                     error,
                 )
             })?;
@@ -852,12 +885,12 @@ async fn run() -> Result<(), Box<dyn Error>> {
                 if reload_result.updated {
                     format!(
                         "Reloaded MCP server `{name}`. Cache file: {}",
-                        reload_result.cache_path.display()
+                        format_path_for_display(&reload_result.cache_path)
                     )
                 } else {
                     format!(
                         "Skipped cache update for MCP server `{name}` because fetched tools matched {}",
-                        reload_result.cache_path.display()
+                        format_path_for_display(&reload_result.cache_path)
                     )
                 },
             );
@@ -871,7 +904,7 @@ async fn run() -> Result<(), Box<dyn Error>> {
                     "cli.reload.list_servers",
                     format!(
                         "failed to list MCP servers from {} before reloading all",
-                        config_path.display()
+                        format_path_for_display(&config_path)
                     ),
                     error,
                 )
@@ -880,7 +913,10 @@ async fn run() -> Result<(), Box<dyn Error>> {
             if servers.is_empty() {
                 print_app_event(
                     "cli.reload",
-                    format!("Reloaded 0 MCP server(s) from {}", config_path.display()),
+                    format!(
+                        "Reloaded 0 MCP server(s) from {}",
+                        format_path_for_display(&config_path)
+                    ),
                 );
             } else {
                 let resolved_provider =
@@ -911,7 +947,7 @@ async fn run() -> Result<(), Box<dyn Error>> {
                     };
                     results.push(format!(
                         "`{server_name}`: {status} at {}",
-                        reload_result.cache_path.display()
+                        format_path_for_display(&reload_result.cache_path)
                     ));
                 }
 
@@ -920,7 +956,7 @@ async fn run() -> Result<(), Box<dyn Error>> {
                     format!(
                         "Reloaded {} MCP server(s) from {}",
                         results.len(),
-                        config_path.display()
+                        format_path_for_display(&config_path)
                     ),
                 );
                 for result in results {
@@ -944,7 +980,7 @@ async fn run() -> Result<(), Box<dyn Error>> {
                         "cli.mcp",
                         format!(
                             "failed to start proxy MCP server with config {}",
-                            config_path.display()
+                            format_path_for_display(&config_path)
                         ),
                         error,
                     )
@@ -955,7 +991,10 @@ async fn run() -> Result<(), Box<dyn Error>> {
                 let _ = load_config_table(&config_path).map_err(|error| {
                     operation_error(
                         "cli.validate_config",
-                        format!("failed to load config from {}", config_path.display()),
+                        format!(
+                            "failed to load config from {}",
+                            format_path_for_display(&config_path)
+                        ),
                         error,
                     )
                 })?;
@@ -978,7 +1017,10 @@ async fn install_with_replace(
     let mut config = load_config_table(config_path).map_err(|error| {
         operation_error(
             "cli.install.replace.load_config",
-            format!("failed to load config from {}", config_path.display()),
+            format!(
+                "failed to load config from {}",
+                format_path_for_display(config_path)
+            ),
             error,
         )
     })?;
@@ -987,7 +1029,7 @@ async fn install_with_replace(
             "cli.install.replace.load_provider",
             format!(
                 "failed to load the provider configuration before importing into {}",
-                config_path.display()
+                format_path_for_display(config_path)
             ),
             error,
         )
@@ -1019,8 +1061,8 @@ async fn install_with_replace(
                 format!(
                     "failed to import MCP server `{}` from {} into {}",
                     server.name,
-                    source_config_path.display(),
-                    config_path.display()
+                    format_path_for_display(&source_config_path),
+                    format_path_for_display(config_path)
                 ),
                 error,
             )
@@ -1033,14 +1075,14 @@ async fn install_with_replace(
                         "cli.install.replace.reload",
                         format!(
                             "failed to reload imported MCP server `{server_name}` from {}",
-                            source_config_path.display()
+                            format_path_for_display(&source_config_path)
                         ),
                         error,
                     )
                 })?;
             imported_servers.push(format!(
                 "Imported `{server_name}` [enabled] and cached tools at {}",
-                reload_result.cache_path.display()
+                format_path_for_display(&reload_result.cache_path)
             ));
         } else {
             imported_servers.push(format!(
@@ -1050,7 +1092,10 @@ async fn install_with_replace(
         config = load_config_table(config_path).map_err(|error| {
             operation_error(
                 "cli.install.replace.refresh_config",
-                format!("failed to refresh config from {}", config_path.display()),
+                format!(
+                    "failed to refresh config from {}",
+                    format_path_for_display(config_path)
+                ),
                 error,
             )
         })?;
@@ -1061,8 +1106,8 @@ async fn install_with_replace(
         format!(
             "Imported {} MCP server(s) from {} into {} before replacing {} MCP config",
             imported_servers.len(),
-            source_config_path.display(),
-            config_path.display(),
+            format_path_for_display(&source_config_path),
+            format_path_for_display(config_path),
             provider_name
         ),
     );
@@ -1160,17 +1205,17 @@ fn print_install_result(stage: &str, provider: &str, installed: &InstallMcpServe
         InstallMcpServerStatus::AlreadyInstalled => format!(
             "MCP server `{}` already exists in {} with command `{command_line}`",
             installed.name,
-            installed.config_path.display()
+            format_path_for_display(&installed.config_path)
         ),
         InstallMcpServerStatus::Updated => format!(
             "Updated MCP server `{}` in {} to command `{command_line}`",
             installed.name,
-            installed.config_path.display()
+            format_path_for_display(&installed.config_path)
         ),
         InstallMcpServerStatus::Installed => format!(
             "Installed MCP server `{}` into {} with command `{command_line}`",
             installed.name,
-            installed.config_path.display()
+            format_path_for_display(&installed.config_path)
         ),
     };
 
@@ -1181,8 +1226,8 @@ fn print_replace_result(stage: &str, replaced: &ReplaceMcpServersResult) {
     let message = format!(
         "Backed up {} MCP server(s) from {} to {} and removed {} MCP server(s) before install",
         replaced.backed_up_server_count,
-        replaced.config_path.display(),
-        replaced.backup_path.display(),
+        format_path_for_display(&replaced.config_path),
+        format_path_for_display(&replaced.backup_path),
         replaced.removed_server_count,
     );
 
@@ -1194,9 +1239,9 @@ fn print_restore_result(stage: &str, provider: &str, restored: &RestoreMcpServer
         "Removed {} `msp mcp` server(s) from {} {} config and restored {} MCP server(s) from {}",
         restored.removed_self_server_count,
         provider,
-        restored.config_path.display(),
+        format_path_for_display(&restored.config_path),
         restored.restored_server_count,
-        restored.backup_path.display(),
+        format_path_for_display(&restored.backup_path),
     );
 
     print_app_event(stage, message);
@@ -1209,7 +1254,11 @@ fn print_server_config(
 ) {
     print_app_event(
         stage,
-        format!("Server `{}` in {}", snapshot.name, config_path.display()),
+        format!(
+            "Server `{}` in {}",
+            snapshot.name,
+            format_path_for_display(config_path)
+        ),
     );
     print_app_event(stage, format!("transport: {}", snapshot.transport));
     print_app_event(stage, format!("enabled: {}", snapshot.enabled));

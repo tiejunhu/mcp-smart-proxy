@@ -22,10 +22,10 @@ use toml::{Table, Value};
 
 use crate::config::{configured_server, list_servers, load_config_table, server_is_enabled};
 use crate::console::{
-    ExternalOutputRouter, describe_command, operation_error, print_external_command_failure,
-    print_external_output_if_present, spawn_stderr_collector,
+    ExternalOutputRouter, describe_command, operation_error,
+    print_external_command_failure_with_captured_stderr, spawn_stderr_collector,
 };
-use crate::paths::{cache_file_path_from_home, home_dir, sanitize_name};
+use crate::paths::{cache_file_path_from_home, format_path_for_display, home_dir, sanitize_name};
 use crate::reload::{reload_server, reload_server_with_provider};
 use crate::remote::connect_remote_client;
 use crate::types::{
@@ -81,7 +81,7 @@ pub async fn serve_cached_toolsets(
                 "mcp.reload_all_toolsets",
                 format!(
                     "failed to reload configured MCP servers before starting proxy with config {}",
-                    config_path.display()
+                    format_path_for_display(config_path)
                 ),
                 error,
             )
@@ -90,7 +90,10 @@ pub async fn serve_cached_toolsets(
     let config = load_config_table(config_path).map_err(|error| {
         operation_error(
             "mcp.load_config",
-            format!("failed to load config from {}", config_path.display()),
+            format!(
+                "failed to load config from {}",
+                format_path_for_display(config_path)
+            ),
             error,
         )
     })?;
@@ -130,7 +133,7 @@ async fn reload_all_toolsets(
             "mcp.reload_all_toolsets.list_servers",
             format!(
                 "failed to list configured MCP servers from {} before startup reload",
-                config_path.display()
+                format_path_for_display(config_path)
             ),
             error,
         )
@@ -408,17 +411,11 @@ async fn connect_toolset_client(
                 Ok(client) => client,
                 Err(error) => {
                     let stderr_content = stderr_capture.finish().await;
-                    print_external_command_failure(
+                    print_external_command_failure_with_captured_stderr(
                         "mcp.connect_toolset_client",
                         &label,
                         &command_line,
                         "connect-failed",
-                    );
-                    print_external_output_if_present(
-                        "mcp.connect_toolset_client",
-                        &label,
-                        &command_line,
-                        "stderr",
                         &stderr_content,
                     )
                     .await;
@@ -644,17 +641,11 @@ impl ServerHandler for SmartProxyMcpServer {
                         }
                         Err(error) => {
                             let stderr_content = stderr_capture.finish().await;
-                            print_external_command_failure(
+                            print_external_command_failure_with_captured_stderr(
                                 "mcp.call_tool_in_external_mcp",
                                 &client.label,
                                 &client.command_line,
                                 "tool-call-failed",
-                            );
-                            print_external_output_if_present(
-                                "mcp.call_tool_in_external_mcp",
-                                &client.label,
-                                &client.command_line,
-                                "stderr",
                                 &stderr_content,
                             )
                             .await;

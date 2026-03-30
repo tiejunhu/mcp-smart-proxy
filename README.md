@@ -106,7 +106,7 @@ msp add --provider codex <mcp server name> <command>
 Example success output:
 
 ```text
-Reloaded MCP server `github`. Cache file: /Users/example/.cache/mcp-smart-proxy/github.json
+Reloaded MCP server `github`. Cache file: ~/.cache/mcp-smart-proxy/github.json
 ```
 
 Example warning output:
@@ -476,7 +476,7 @@ Each configured server is emitted on its own application output line with its en
 Example:
 
 ```text
-Configured 2 MCP server(s) in /Users/example/.config/mcp-smart-proxy/config.toml (1 enabled, 1 disabled)
+Configured 2 MCP server(s) in ~/.config/mcp-smart-proxy/config.toml (1 enabled, 1 disabled)
 `github` [enabled]: npx -y @modelcontextprotocol/server-github (last updated: 2026-03-16 10:30:45)
 `slack` [disabled]: uvx slack-mcp (last updated: never)
 ```

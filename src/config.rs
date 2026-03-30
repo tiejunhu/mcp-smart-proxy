@@ -7,7 +7,9 @@ use std::path::{Path, PathBuf};
 use serde_json::{Map as JsonMap, Value as JsonValue};
 use toml::{Table, Value};
 
-use crate::paths::{cache_file_path, expand_tilde, sanitize_name, sibling_backup_path};
+use crate::paths::{
+    cache_file_path, expand_tilde, format_path_for_display, sanitize_name, sibling_backup_path,
+};
 use crate::types::{
     CachedTools, ClaudeRuntimeConfig, CodexRuntimeConfig, ConfiguredServer, ConfiguredTransport,
     ModelProviderConfig, OpencodeRuntimeConfig,
@@ -1120,7 +1122,7 @@ fn restore_codex_mcp_servers_from_path(
         .ok_or_else(|| {
             format!(
                 "no `mcp_servers` table found in Codex backup {}",
-                backup_path.display()
+                format_path_for_display(&backup_path)
             )
         })?
         .clone();
@@ -1149,7 +1151,7 @@ fn restore_opencode_mcp_servers_from_path(
         .ok_or_else(|| {
             format!(
                 "no `mcp` object found in OpenCode backup {}",
-                backup_path.display()
+                format_path_for_display(&backup_path)
             )
         })?
         .clone();
@@ -1178,7 +1180,7 @@ fn restore_claude_mcp_servers_from_path(
         .ok_or_else(|| {
             format!(
                 "no `mcpServers` object found in Claude Code backup {}",
-                backup_path.display()
+                format_path_for_display(&backup_path)
             )
         })?
         .clone();
@@ -1198,7 +1200,11 @@ fn restore_claude_mcp_servers_from_path(
 
 fn load_codex_servers_for_import_from_path(path: &Path) -> Result<ImportPlan, Box<dyn Error>> {
     if !path.exists() {
-        return Err(format!("Codex config not found at {}", path.display()).into());
+        return Err(format!(
+            "Codex config not found at {}",
+            format_path_for_display(path)
+        )
+        .into());
     }
 
     let config = load_config_table(path)?;
@@ -1208,12 +1214,16 @@ fn load_codex_servers_for_import_from_path(path: &Path) -> Result<ImportPlan, Bo
         .ok_or_else(|| {
             format!(
                 "no `mcp_servers` table found in Codex config {}",
-                path.display()
+                format_path_for_display(path)
             )
         })?;
 
     if servers.is_empty() {
-        return Err(format!("no MCP servers found in Codex config {}", path.display()).into());
+        return Err(format!(
+            "no MCP servers found in Codex config {}",
+            format_path_for_display(path)
+        )
+        .into());
     }
 
     let mut names = servers.keys().cloned().collect::<Vec<_>>();
@@ -1254,7 +1264,11 @@ fn load_codex_servers_for_import_from_path(path: &Path) -> Result<ImportPlan, Bo
 
 fn load_opencode_servers_for_import_from_path(path: &Path) -> Result<ImportPlan, Box<dyn Error>> {
     if !path.exists() {
-        return Err(format!("OpenCode config not found at {}", path.display()).into());
+        return Err(format!(
+            "OpenCode config not found at {}",
+            format_path_for_display(path)
+        )
+        .into());
     }
 
     let contents = fs::read_to_string(path)?;
@@ -1265,12 +1279,16 @@ fn load_opencode_servers_for_import_from_path(path: &Path) -> Result<ImportPlan,
         .ok_or_else(|| {
             format!(
                 "no `mcp` object found in OpenCode config {}",
-                path.display()
+                format_path_for_display(path)
             )
         })?;
 
     if servers.is_empty() {
-        return Err(format!("no MCP servers found in OpenCode config {}", path.display()).into());
+        return Err(format!(
+            "no MCP servers found in OpenCode config {}",
+            format_path_for_display(path)
+        )
+        .into());
     }
 
     let mut names = servers.keys().cloned().collect::<Vec<_>>();
@@ -1311,7 +1329,11 @@ fn load_opencode_servers_for_import_from_path(path: &Path) -> Result<ImportPlan,
 
 fn load_claude_servers_for_import_from_path(path: &Path) -> Result<ImportPlan, Box<dyn Error>> {
     if !path.exists() {
-        return Err(format!("Claude Code config not found at {}", path.display()).into());
+        return Err(format!(
+            "Claude Code config not found at {}",
+            format_path_for_display(path)
+        )
+        .into());
     }
 
     let contents = fs::read_to_string(path)?;
@@ -1322,14 +1344,14 @@ fn load_claude_servers_for_import_from_path(path: &Path) -> Result<ImportPlan, B
         .ok_or_else(|| {
             format!(
                 "no `mcpServers` object found in Claude Code config {}",
-                path.display()
+                format_path_for_display(path)
             )
         })?;
 
     if servers.is_empty() {
         return Err(format!(
             "no MCP servers found in Claude Code config {}",
-            path.display()
+            format_path_for_display(path)
         )
         .into());
     }
@@ -2346,7 +2368,11 @@ fn merge_claude_servers_into_target(
 
 fn load_required_codex_backup(path: &Path) -> Result<Table, Box<dyn Error>> {
     if !path.exists() {
-        return Err(format!("Codex backup not found at {}", path.display()).into());
+        return Err(format!(
+            "Codex backup not found at {}",
+            format_path_for_display(path)
+        )
+        .into());
     }
 
     load_config_table(path)
@@ -2354,7 +2380,11 @@ fn load_required_codex_backup(path: &Path) -> Result<Table, Box<dyn Error>> {
 
 fn load_required_opencode_backup(path: &Path) -> Result<JsonValue, Box<dyn Error>> {
     if !path.exists() {
-        return Err(format!("OpenCode backup not found at {}", path.display()).into());
+        return Err(format!(
+            "OpenCode backup not found at {}",
+            format_path_for_display(path)
+        )
+        .into());
     }
 
     load_opencode_config(path)
@@ -2362,7 +2392,11 @@ fn load_required_opencode_backup(path: &Path) -> Result<JsonValue, Box<dyn Error
 
 fn load_required_claude_backup(path: &Path) -> Result<JsonValue, Box<dyn Error>> {
     if !path.exists() {
-        return Err(format!("Claude Code backup not found at {}", path.display()).into());
+        return Err(format!(
+            "Claude Code backup not found at {}",
+            format_path_for_display(path)
+        )
+        .into());
     }
 
     load_claude_config(path)
