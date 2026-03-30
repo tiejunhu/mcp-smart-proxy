@@ -8,7 +8,7 @@ The installed binary name is `msp`. Running `msp` without arguments shows the to
 
 ## Why use it
 
-- Reduce the number of tools your agent sees.
+- Reduce the number of tools your agent sees (reduce the token cost without losing any tool).
 - Cache downstream MCP tool metadata and summaries.
 - Proxy both local stdio MCP servers and remote Streamable HTTP MCP servers.
 - Reuse your existing Codex, OpenCode, or Claude Code MCP setup instead of rebuilding everything from scratch.
