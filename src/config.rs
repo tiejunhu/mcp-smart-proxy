@@ -304,10 +304,7 @@ pub fn list_servers(config_path: &Path) -> Result<Vec<ListedServer>, Box<dyn Err
                 .as_table()
                 .ok_or_else(|| format!("server `{name}` must be a table"))?;
 
-            let transport = server
-                .get("transport")
-                .and_then(Value::as_str)
-                .unwrap_or("stdio");
+            let transport = resolved_server_transport(server, &name)?;
             let (command, args) = match transport {
                 "stdio" => {
                     let command = server
@@ -477,10 +474,7 @@ pub fn configured_server(
         .as_table()
         .ok_or_else(|| format!("server `{resolved_name}` must be a table"))?;
 
-    let transport = server
-        .get("transport")
-        .and_then(Value::as_str)
-        .unwrap_or("stdio");
+    let transport = resolved_server_transport(server, &resolved_name)?;
     let (configured_transport, command, args, url, headers) = match transport {
         "stdio" => {
             let command = server
@@ -588,11 +582,7 @@ pub fn update_server_config(
     let mut config = load_config_table(config_path)?;
     let resolved_name = {
         let (resolved_name, server) = resolved_server_table_mut(&mut config, requested_name)?;
-        let current_transport = server
-            .get("transport")
-            .and_then(Value::as_str)
-            .unwrap_or("stdio")
-            .to_string();
+        let current_transport = resolved_server_transport(server, &resolved_name)?.to_string();
         let next_transport = if let Some(url) = &update.url {
             if !looks_like_url(url) {
                 return Err(format!(
@@ -639,10 +629,19 @@ pub fn update_server_config(
             .into());
         }
 
-        server.insert(
-            "transport".to_string(),
-            Value::String(next_transport.clone()),
-        );
+        match update.transport.as_deref() {
+            Some("stdio") | Some("remote") => {
+                server.insert(
+                    "transport".to_string(),
+                    Value::String(next_transport.clone()),
+                );
+            }
+            Some(_) => unreachable!("unsupported transport already rejected"),
+            None if next_transport != current_transport => {
+                server.remove("transport");
+            }
+            None => {}
+        }
 
         if next_transport == "stdio" {
             server.remove("url");
@@ -1407,7 +1406,6 @@ fn insert_server(
         .ok_or_else(|| "`servers` in config must be a table".to_string())?;
 
     let mut server_table = Table::new();
-    server_table.insert("transport".to_string(), Value::String("stdio".to_string()));
     server_table.insert("command".to_string(), Value::String(server.command.clone()));
     server_table.insert(
         "args".to_string(),
@@ -1454,7 +1452,6 @@ fn insert_remote_server(
         .ok_or_else(|| "`servers` in config must be a table".to_string())?;
 
     let mut server_table = Table::new();
-    server_table.insert("transport".to_string(), Value::String("remote".to_string()));
     server_table.insert("url".to_string(), Value::String(url.to_string()));
     if !headers.is_empty() {
         server_table.insert(
@@ -1496,6 +1493,43 @@ fn parse_server_enabled(server: &Table, name: &str) -> Result<bool, Box<dyn Erro
         Some(Value::Boolean(enabled)) => Ok(*enabled),
         Some(_) => Err(format!("server `{name}` has a non-boolean `enabled` field").into()),
         None => Ok(true),
+    }
+}
+
+fn resolved_server_transport(server: &Table, name: &str) -> Result<&'static str, Box<dyn Error>> {
+    if let Some(transport) = configured_server_transport(server, name)? {
+        return Ok(transport);
+    }
+
+    infer_server_transport(server, name)
+}
+
+fn configured_server_transport(
+    server: &Table,
+    name: &str,
+) -> Result<Option<&'static str>, Box<dyn Error>> {
+    match server.get("transport") {
+        Some(Value::String(transport)) => match transport.as_str() {
+            "stdio" => Ok(Some("stdio")),
+            "remote" => Ok(Some("remote")),
+            other => Err(format!(
+                "server `{name}` uses unsupported transport `{other}`, only `stdio` and `remote` are supported"
+            )
+            .into()),
+        },
+        Some(_) => Err(format!("server `{name}` has a non-string `transport` field").into()),
+        None => Ok(None),
+    }
+}
+
+fn infer_server_transport(server: &Table, name: &str) -> Result<&'static str, Box<dyn Error>> {
+    let has_command = server.contains_key("command");
+    let has_url = server.contains_key("url");
+
+    match (has_command, has_url) {
+        (true, _) => Ok("stdio"),
+        (false, true) => Ok("remote"),
+        (false, false) => Err(format!("server `{name}` must define `command` or `url`").into()),
     }
 }
 
@@ -1644,10 +1678,7 @@ fn server_config_snapshot(
     resolved_name: &str,
     server: &Table,
 ) -> Result<ServerConfigSnapshot, Box<dyn Error>> {
-    let transport = server
-        .get("transport")
-        .and_then(Value::as_str)
-        .unwrap_or("stdio");
+    let transport = resolved_server_transport(server, resolved_name)?;
     let enabled = parse_server_enabled(server, resolved_name)?;
     let env = parse_toml_string_table(server.get("env"), "env", "server", resolved_name)?;
     let env_vars =
@@ -4084,7 +4115,7 @@ mod tests {
         let config = load_config_table(&config_path).unwrap();
 
         let saved = config["servers"][&server_name].as_table().unwrap();
-        assert_eq!(saved["transport"].as_str(), Some("remote"));
+        assert!(saved.get("transport").is_none());
         assert_eq!(saved["url"].as_str(), Some("https://ones.com/mcp"));
         assert!(saved.get("command").is_none());
         assert!(saved.get("args").is_none());
@@ -4188,6 +4219,36 @@ mod tests {
     }
 
     #[test]
+    fn loads_server_config_snapshot_without_transport_field() {
+        let config_path = unique_test_path("load-server-config-without-transport.toml");
+        fs::write(
+            &config_path,
+            r#"
+                [servers.demo]
+                url = "https://example.com/mcp"
+
+                [servers.demo.headers]
+                Authorization = "Bearer ${DEMO_TOKEN}"
+            "#,
+        )
+        .unwrap();
+
+        let snapshot = load_server_config(&config_path, "demo").unwrap();
+
+        assert_eq!(snapshot.transport, "remote");
+        assert_eq!(snapshot.url.as_deref(), Some("https://example.com/mcp"));
+        assert_eq!(
+            snapshot.headers,
+            BTreeMap::from([(
+                "Authorization".to_string(),
+                "Bearer ${DEMO_TOKEN}".to_string(),
+            )])
+        );
+
+        fs::remove_file(config_path).unwrap();
+    }
+
+    #[test]
     fn updates_server_config_fields() {
         let config_path = unique_test_path("update-server-config.toml");
         fs::write(
@@ -4243,6 +4304,40 @@ mod tests {
                 env_vars: vec!["DEMO_TOKEN".to_string()],
             }
         );
+
+        fs::remove_file(config_path).unwrap();
+    }
+
+    #[test]
+    fn implicit_transport_switch_removes_stale_transport_override() {
+        let config_path = unique_test_path("update-server-config-remove-transport.toml");
+        fs::write(
+            &config_path,
+            r#"
+                [servers.demo]
+                transport = "stdio"
+                command = "npx"
+                args = ["-y", "demo-server"]
+            "#,
+        )
+        .unwrap();
+
+        let updated = update_server_config(
+            &config_path,
+            "demo",
+            &UpdateServerConfig {
+                url: Some("https://example.com/mcp".to_string()),
+                ..UpdateServerConfig::default()
+            },
+        )
+        .unwrap();
+
+        assert_eq!(updated.transport, "remote");
+        let config = load_config_table(&config_path).unwrap();
+        let saved = config["servers"]["demo"].as_table().unwrap();
+        assert!(saved.get("transport").is_none());
+        assert_eq!(saved["url"].as_str(), Some("https://example.com/mcp"));
+        assert!(saved.get("command").is_none());
 
         fs::remove_file(config_path).unwrap();
     }
@@ -4520,10 +4615,7 @@ mod tests {
         let config = load_config_table(&config_path).unwrap();
 
         assert_eq!(server_name, "ones");
-        assert_eq!(
-            config["servers"]["ones"]["transport"].as_str(),
-            Some("remote")
-        );
+        assert!(config["servers"]["ones"].get("transport").is_none());
         assert_eq!(
             config["servers"]["ones"]["url"].as_str(),
             Some("https://ones.com/mcp")
@@ -4616,7 +4708,6 @@ mod tests {
         let config: Table = toml::from_str(
             r#"
                 [servers.my-server]
-                transport = "stdio"
                 command = "uvx"
                 args = ["mcp-server"]
             "#,
@@ -4643,6 +4734,95 @@ mod tests {
 
         let (sanitized_name, _) = configured_server(&config, "My Server").unwrap();
         assert_eq!(sanitized_name, "my-server");
+    }
+
+    #[test]
+    fn infers_remote_transport_without_transport_field() {
+        let config: Table = toml::from_str(
+            r#"
+                [servers.remote-demo]
+                url = "https://example.com/mcp"
+
+                [servers.remote-demo.headers]
+                Authorization = "Bearer ${DEMO_TOKEN}"
+            "#,
+        )
+        .unwrap();
+
+        let (_, server) = configured_server(&config, "remote-demo").unwrap();
+
+        assert_eq!(
+            server,
+            ConfiguredServer {
+                transport: ConfiguredTransport::Remote {
+                    url: "https://example.com/mcp".to_string(),
+                    headers: BTreeMap::from([(
+                        "Authorization".to_string(),
+                        "Bearer ${DEMO_TOKEN}".to_string(),
+                    )]),
+                },
+                command: String::new(),
+                args: Vec::new(),
+                url: Some("https://example.com/mcp".to_string()),
+                headers: BTreeMap::from([(
+                    "Authorization".to_string(),
+                    "Bearer ${DEMO_TOKEN}".to_string(),
+                )]),
+                env: BTreeMap::new(),
+                env_vars: Vec::new(),
+            }
+        );
+    }
+
+    #[test]
+    fn infers_stdio_transport_when_command_and_url_are_both_present() {
+        let config: Table = toml::from_str(
+            r#"
+                [servers.demo]
+                command = "uvx"
+                args = ["demo-server"]
+                url = "https://example.com/mcp"
+            "#,
+        )
+        .unwrap();
+
+        let (_, server) = configured_server(&config, "demo").unwrap();
+
+        assert_eq!(server.command, "uvx");
+        assert_eq!(server.args, vec!["demo-server".to_string()]);
+        assert!(matches!(
+            server.transport,
+            ConfiguredTransport::Stdio {
+                command,
+                args
+            } if command == "uvx" && args == vec!["demo-server".to_string()]
+        ));
+    }
+
+    #[test]
+    fn explicit_transport_overrides_inferred_fields() {
+        let config: Table = toml::from_str(
+            r#"
+                [servers.demo]
+                transport = "remote"
+                command = "uvx"
+                args = ["demo-server"]
+                url = "https://example.com/mcp"
+            "#,
+        )
+        .unwrap();
+
+        let (_, server) = configured_server(&config, "demo").unwrap();
+
+        assert_eq!(
+            server.transport,
+            ConfiguredTransport::Remote {
+                url: "https://example.com/mcp".to_string(),
+                headers: BTreeMap::new(),
+            }
+        );
+        assert_eq!(server.url.as_deref(), Some("https://example.com/mcp"));
+        assert!(server.command.is_empty());
     }
 
     #[test]

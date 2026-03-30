@@ -157,35 +157,35 @@ Example config:
 transport = "stdio"
 command = "npx"
 args = ["-y", "@modelcontextprotocol/server-github"]
+enabled = true
 env_vars = ["GITHUB_TOKEN"]
 
 [servers.github.env]
 GITHUB_API_URL = "https://api.github.com"
+GITHUB_ENTERPRISE_MODE = "false"
+
+[servers.test]
+transport = "remote"
+url = "https://example.com/mcp"
+enabled = false
+env_vars = ["DEMO_TOKEN", "DEMO_REGION"]
+
+[servers.test.headers]
+Authorization = "Bearer ${DEMO_TOKEN}"
+X-Region = "${DEMO_REGION:-global}"
 
 [servers.filesystem]
 transport = "stdio"
 command = "npx"
 args = ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"]
-
-[servers.remote-demo]
-transport = "remote"
-url = "https://example.com/mcp"
-
-[servers.remote-demo.headers]
-Authorization = "Bearer ${DEMO_TOKEN}"
-
-[servers.legacy-demo]
-transport = "stdio"
-command = "uvx"
-args = ["legacy-demo-server"]
-enabled = false
 ```
 
 Notes:
 
 - The config file only stores managed `servers`.
 - Each server is enabled by default. Set `enabled = false` or run `msp disable <name>` to keep it configured but exclude it from `msp mcp` activation and bulk reload.
-- `transport = "stdio"` servers use `command` plus `args`. `transport = "remote"` servers use a Streamable HTTP `url` plus optional `headers`.
+- `transport` is optional. When it is set, `msp` obeys it. When it is omitted, `msp` infers `stdio` from `command`, infers `remote` from `url`, and prefers `stdio` if both `command` and `url` are present.
+- `stdio` servers use `command` plus `args`. `remote` servers use a Streamable HTTP `url` plus optional `headers`.
 - `env` stores static environment variables for the downstream MCP server, while `env_vars` lists variable names that `msp` forwards from its own process environment when it starts that server.
 - `msp config <name>` shows one managed server's current `transport`, `enabled`, `command` / `args` or `url` / `headers`, plus `env` and `env_vars`, and can also update them in place.
 - Remote OAuth configuration is discovered automatically at runtime. Access tokens are cached outside the main config file.
@@ -217,7 +217,6 @@ If the command passed to `add` is a single `http://` or `https://` URL, `msp` st
 
 ```toml
 [servers.remote-demo]
-transport = "remote"
 url = "https://example.com/mcp"
 ```
 
@@ -276,8 +275,9 @@ This command:
 5. adds or replaces static environment variables with `--env KEY=VALUE`, removes specific keys with `--unset-env KEY`, and clears the whole table with `--clear-env`
 6. adds forwarded environment variable names with `--env-var NAME`, removes specific names with `--unset-env-var NAME`, and clears the whole list with `--clear-env-vars`
 7. updates `enabled` with `--enabled true|false`
+8. treats `--transport` as an optional explicit override; when omitted, `--cmd` and `--url` can still switch the stored server shape by changing its fields
 
-`msp config --transport stdio` and `msp config --transport remote` are both accepted.
+`msp config --transport stdio` and `msp config --transport remote` are both accepted when you want the config file to pin a transport explicitly instead of relying on field inference.
 
 ### Log in or out of a remote server
 
@@ -296,7 +296,7 @@ msp logout remote-demo
 This command pair:
 
 1. resolves the server by exact or normalized name
-2. requires the server to use `transport = "remote"`
+2. requires the server to resolve to `remote`
 3. uses OAuth metadata discovered from the remote MCP server instead of extra local OAuth config
 4. starts a local callback listener on an automatically selected random port
 5. opens the browser for authorization when needed
@@ -315,7 +315,7 @@ This command:
 1. reads Codex MCP servers from `$CODEX_HOME/config.toml` or `~/.codex/config.toml`
 2. imports each server into the `msp` config
 3. preserves each imported server's optional `enabled` flag and defaults to enabled when the source omits it
-4. preserves each imported server's optional `env` table and `env_vars` list, and stores remote entries as native `msp` `transport = "remote"` config with `url` plus optional `headers`
+4. preserves each imported server's optional `env` table and `env_vars` list, and stores remote entries as native `msp` config with `url` plus optional `headers`
 5. reloads only imported servers that are enabled
 6. resolves the summary provider with priority `--provider`, then the current import source provider (`codex`)
 
@@ -340,7 +340,7 @@ This command:
 1. reads OpenCode MCP servers from `~/.config/opencode/opencode.json`
 2. imports each server into the `msp` config
 3. preserves each imported server's optional `enabled` flag and defaults to enabled when the source omits it
-4. preserves each imported local server's optional `environment` object as `msp` server `env`, and stores remote `url` plus optional `headers` as native `msp` remote config
+4. preserves each imported local server's optional `environment` object as `msp` server `env`, and stores remote `url` plus optional `headers` as native `msp` config
 5. reloads only imported servers that are enabled
 6. resolves the summary provider with priority `--provider`, then the current import source provider (`opencode`)
 
@@ -363,7 +363,7 @@ This command:
 1. reads Claude Code MCP servers from `~/.claude.json`
 2. imports servers from the user-scope `mcpServers` object into the `msp` config
 3. imports local `stdio` servers with `command`, optional `args`, and optional `env`
-4. stores remote `http` or `sse` servers with `url` plus optional `headers` as native `msp` remote config
+4. stores remote `http` or `sse` servers with `url` plus optional `headers` as native `msp` config
 5. preserves Claude-style header placeholders like `${API_KEY}` in `msp`'s native `headers` table and records the referenced env var names in `env_vars`
 6. reloads imported servers with the summary provider resolved by priority `--provider`, then the current import source provider (`claude`)
 
