@@ -12,6 +12,11 @@
 - after editing, always run `cargo fmt` to ensure consistent code formatting, and `cargo clippy` to catch common mistakes and improve code quality, and `rust-analyzer diagnostics .` for language server diagnostics
 - always make code clean, readable, and maintainable, avoid unnecessary complexity, avoid over-engineering, avoid duplicate code, and follow Rust best practices and idioms
 
+# Documentation
+
+- Keep README.md update to date and user facing, user frendly, and concise, and make sure it covers all the features and usage of the project.
+- Doc about the code, design and decision should be updated in AGENTS.md
+
 # packages
 
 - rmcp, for mcp server and client
@@ -24,4 +29,3 @@
 - Console output must clearly separate application output from external command output.
 - External command output must include the stage, the command line, the stream (`stdout` or `stderr`), and clear start/end or block markers.
 - Error output must explain which stage failed and preserve enough original external output that another AI model can diagnose the failing step from the console transcript alone.
-- When changing console behavior, update README.md examples or usage notes in the same change.
