@@ -5,7 +5,7 @@ use std::path::Path;
 
 use toml::{Table, Value};
 
-use crate::fs_util::write_file_atomically;
+use crate::fs_util::{acquire_sibling_lock, write_file_atomically};
 use crate::paths::{cache_file_path, sanitize_name};
 use crate::types::{CachedTools, ConfiguredServer, ConfiguredTransport};
 
@@ -147,7 +147,8 @@ pub fn list_servers(config_path: &Path) -> Result<Vec<super::ListedServer>, Box<
     let mut names = servers.keys().cloned().collect::<Vec<_>>();
     names.sort();
 
-    names.into_iter()
+    names
+        .into_iter()
         .map(|name| {
             let server = servers[&name]
                 .as_table()
@@ -181,6 +182,12 @@ pub fn remove_server(
     config_path: &Path,
     requested_name: &str,
 ) -> Result<RemovedServer, Box<dyn Error>> {
+    let normalized_name = sanitize_name(requested_name);
+    let cache_lock = if normalized_name.is_empty() {
+        None
+    } else {
+        Some(acquire_sibling_lock(&cache_file_path(&normalized_name)?)?)
+    };
     let mut config = load_config_table(config_path)?;
     let remove_servers_table = {
         let servers = config
@@ -208,6 +215,7 @@ pub fn remove_server(
     } else {
         false
     };
+    drop(cache_lock);
 
     Ok(RemovedServer {
         name: resolved_name,
@@ -284,7 +292,9 @@ pub fn configured_server(
         .ok_or_else(|| format!("server `{resolved_name}` must be a table"))?;
     let parsed = parse_server_entry(server, &resolved_name)?;
     let configured_transport = match parsed.transport {
-        ParsedServerTransport::Stdio { command, args } => ConfiguredTransport::Stdio { command, args },
+        ParsedServerTransport::Stdio { command, args } => {
+            ConfiguredTransport::Stdio { command, args }
+        }
         ParsedServerTransport::Remote { url, headers } => {
             ConfiguredTransport::Remote { url, headers }
         }
@@ -851,7 +861,10 @@ fn parse_server_entry(server: &Table, name: &str) -> Result<ParsedServerEntry, B
     })
 }
 
-fn parse_stdio_command(server: &Table, name: &str) -> Result<(String, Vec<String>), Box<dyn Error>> {
+fn parse_stdio_command(
+    server: &Table,
+    name: &str,
+) -> Result<(String, Vec<String>), Box<dyn Error>> {
     let command = server
         .get("command")
         .and_then(Value::as_str)

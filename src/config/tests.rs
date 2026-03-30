@@ -1,13 +1,15 @@
 use super::*;
 use crate::cli::DEFAULT_CONFIG_PATH;
+use crate::fs_util::acquire_sibling_lock;
 use crate::paths::{cache_file_path_from_home, expand_tilde, sibling_backup_path};
 use crate::types::{CachedTools, ConfiguredServer, ConfiguredTransport, ModelProviderConfig};
 use serde_json::Value as JsonValue;
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, OnceLock};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::sync::{Mutex, OnceLock, mpsc};
+use std::thread;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use toml::{Table, Value};
 
 fn env_lock() -> &'static Mutex<()> {
@@ -1923,6 +1925,65 @@ fn remove_server_drops_servers_table_when_last_entry_is_removed() {
 
     let config = load_config_table(&config_path).unwrap();
     assert!(config.get("servers").is_none());
+
+    fs::remove_file(config_path).unwrap();
+    fs::remove_dir_all(cache_home).unwrap();
+}
+
+#[test]
+fn remove_server_waits_for_cache_lock_before_updating_state() {
+    let _guard = env_lock().lock().unwrap();
+    let previous_home = env::var("HOME").ok();
+    let config_path = unique_test_path("remove-server-lock.toml");
+    let cache_home = unique_test_path("remove-server-lock-home");
+
+    unsafe {
+        env::set_var("HOME", &cache_home);
+    }
+
+    fs::create_dir_all(cache_home.join(".cache/mcp-smart-proxy")).unwrap();
+    fs::write(
+        &config_path,
+        r#"
+                [servers.github]
+                transport = "stdio"
+                command = "npx"
+                args = ["-y", "@modelcontextprotocol/server-github"]
+            "#,
+    )
+    .unwrap();
+    let cache_path = cache_file_path_from_home(&cache_home, "github").unwrap();
+    fs::write(&cache_path, "{}").unwrap();
+
+    let cache_lock = acquire_sibling_lock(&cache_path).unwrap();
+    let (done_tx, done_rx) = mpsc::channel();
+    let config_path_for_thread = config_path.clone();
+    let worker = thread::spawn(move || {
+        let removed = remove_server(&config_path_for_thread, "github").unwrap();
+        done_tx.send(removed).unwrap();
+    });
+
+    thread::sleep(Duration::from_millis(150));
+    assert!(done_rx.try_recv().is_err());
+    assert!(cache_path.exists());
+    let config = load_config_table(&config_path).unwrap();
+    assert!(config["servers"].as_table().unwrap().contains_key("github"));
+
+    drop(cache_lock);
+
+    let removed = done_rx.recv().unwrap();
+    worker.join().unwrap();
+
+    assert_eq!(removed.name, "github");
+    assert!(removed.cache_deleted);
+    assert!(!cache_path.exists());
+    let config = load_config_table(&config_path).unwrap();
+    assert!(config.get("servers").is_none());
+
+    match previous_home {
+        Some(value) => unsafe { env::set_var("HOME", value) },
+        None => unsafe { env::remove_var("HOME") },
+    }
 
     fs::remove_file(config_path).unwrap();
     fs::remove_dir_all(cache_home).unwrap();

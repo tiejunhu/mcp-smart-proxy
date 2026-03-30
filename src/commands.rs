@@ -25,8 +25,8 @@ mod provider;
 use config_cmd::{ConfigCommandArgs, print_server_config};
 use provider::{
     ImportPlanLoader, import_stage, install_stage, provider_hooks_for_import_source,
-    provider_hooks_for_install_target, resolve_default_command_provider,
-    resolve_import_provider, resolve_install_import_provider, restore_stage,
+    provider_hooks_for_install_target, resolve_default_command_provider, resolve_import_provider,
+    resolve_install_import_provider, restore_stage,
 };
 
 struct ImportExecutionResult {
@@ -939,8 +939,8 @@ fn print_restore_result(stage: &str, provider: &str, restored: &RestoreMcpServer
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::provider::missing_provider_error;
+    use super::*;
 
     #[test]
     fn formats_missing_last_updated_as_never() {

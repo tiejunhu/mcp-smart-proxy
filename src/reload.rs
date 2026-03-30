@@ -11,7 +11,9 @@ use crate::console::{
 };
 use crate::downstream_client::connect_stdio_client;
 use crate::fs_util::{FileLockGuard, acquire_sibling_lock, write_file_atomically};
-use crate::paths::{cache_file_path, format_path_for_display, sibling_lock_path, unix_epoch_ms};
+use crate::paths::{
+    cache_file_path, format_path_for_display, sanitize_name, sibling_lock_path, unix_epoch_ms,
+};
 use crate::reload::summarizer::summarize_tools;
 use crate::remote::connect_remote_client;
 use crate::types::{
@@ -48,6 +50,28 @@ async fn reload_server_with_resolved_provider(
     name: &str,
     provider: &ModelProviderConfig,
 ) -> Result<ReloadResult, Box<dyn Error>> {
+    let normalized_name = sanitize_name(name);
+    let lock_cache_path = if normalized_name.is_empty() {
+        None
+    } else {
+        Some(cache_file_path(&normalized_name).map_err(|error| {
+            operation_error(
+                "reload.cache_path",
+                format!("failed to compute cache path for `{normalized_name}`"),
+                error,
+            )
+        })?)
+    };
+    let _reload_lock = match &lock_cache_path {
+        Some(cache_path) => Some(acquire_reload_lock(cache_path).map_err(|error| {
+            operation_error(
+                "reload.lock",
+                format!("failed to acquire refresh lock for `{normalized_name}`"),
+                error,
+            )
+        })?),
+        None => None,
+    };
     let config = load_config_table(config_path).map_err(|error| {
         operation_error(
             "reload.load_config",
@@ -65,20 +89,16 @@ async fn reload_server_with_resolved_provider(
             error,
         )
     })?;
-    let cache_path = cache_file_path(&resolved_name).map_err(|error| {
-        operation_error(
-            "reload.cache_path",
-            format!("failed to compute cache path for `{resolved_name}`"),
-            error,
-        )
-    })?;
-    let _reload_lock = acquire_reload_lock(&cache_path).map_err(|error| {
-        operation_error(
-            "reload.lock",
-            format!("failed to acquire refresh lock for `{resolved_name}`"),
-            error,
-        )
-    })?;
+    let cache_path = match lock_cache_path {
+        Some(cache_path) => cache_path,
+        None => cache_file_path(&resolved_name).map_err(|error| {
+            operation_error(
+                "reload.cache_path",
+                format!("failed to compute cache path for `{resolved_name}`"),
+                error,
+            )
+        })?,
+    };
     let tools = fetch_tools(&resolved_name, &server)
         .await
         .map_err(|error| {
