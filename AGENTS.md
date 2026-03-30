@@ -4,12 +4,12 @@
 - Keep all usage of this project in README.md, update it as needed, and make sure it is clear and concise.
 - Before making any changes, present the plan (in the same language as user's input) to the user and ask the user for approving.
 
-# File edit
+# Code edit
 
 - prefer small files, with a single responsibility, and a clear API
 - when some function is not needed, don't hesitate to remove it, we can always add it back when we need it
-- refresh operations that write cache files must use a sibling `.lock` file so concurrent refreshes for the same target serialize safely
-- after editing, always run `cargo fmt` to ensure consistent code formatting, and `cargo clippy` to catch common mistakes and improve code quality
+- after editing, always run `cargo fmt` to ensure consistent code formatting, and `cargo clippy` to catch common mistakes and improve code quality, and `rust-analyzer diagnostics .` for language server diagnostics
+- always make code clean, readable, and maintainable, avoid unnecessary complexity, avoid over-engineering, avoid duplicate code, and follow Rust best practices and idioms
 
 # packages
 

@@ -14,24 +14,18 @@ use super::{
     UpdateServerConfig, is_self_server_command,
 };
 
-enum ParsedServerTransport {
-    Stdio {
-        command: String,
-        args: Vec<String>,
-    },
-    Remote {
-        url: String,
-        headers: BTreeMap<String, String>,
-    },
-}
+mod lookup;
+mod schema;
+mod update;
 
-struct ParsedServerEntry {
-    transport_name: &'static str,
-    transport: ParsedServerTransport,
-    enabled: bool,
-    env: BTreeMap<String, String>,
-    env_vars: Vec<String>,
-}
+pub(crate) use lookup::{
+    has_server_name, resolve_server_name, resolved_server_table, resolved_server_table_mut,
+};
+pub(crate) use schema::{
+    ParsedServerTransport, parse_remote_server_url, parse_server_enabled, parse_server_entry,
+    resolved_server_transport, server_config_snapshot,
+};
+pub use update::update_server_config;
 
 pub fn add_server(
     config_path: &Path,
@@ -333,211 +327,6 @@ pub fn load_server_config(
     server_config_snapshot(&resolved_name, server)
 }
 
-pub fn update_server_config(
-    config_path: &Path,
-    requested_name: &str,
-    update: &UpdateServerConfig,
-) -> Result<ServerConfigSnapshot, Box<dyn Error>> {
-    let mut config = load_config_table(config_path)?;
-    let resolved_name = {
-        let (resolved_name, server) = resolved_server_table_mut(&mut config, requested_name)?;
-        let current_transport = resolved_server_transport(server, &resolved_name)?.to_string();
-        let next_transport = if let Some(url) = &update.url {
-            if !looks_like_url(url) {
-                return Err(format!(
-                    "server `{resolved_name}` has an invalid remote `url` value `{url}`"
-                )
-                .into());
-            }
-            "remote".to_string()
-        } else if current_transport == "remote" && update.command.is_some() {
-            "stdio".to_string()
-        } else if let Some(transport) = &update.transport {
-            transport.clone()
-        } else {
-            current_transport.clone()
-        };
-
-        match next_transport.as_str() {
-            "stdio" | "remote" => {}
-            other => {
-                return Err(format!(
-                    "server `{resolved_name}` uses unsupported transport `{other}`, only `stdio` and `remote` are supported"
-                )
-                .into())
-            }
-        }
-
-        if next_transport == "remote"
-            && (update.command.is_some() || update.clear_args || !update.add_args.is_empty())
-        {
-            return Err(format!(
-                "server `{resolved_name}` uses remote transport; update it with `--url` and header flags instead of `--cmd` or `--arg`"
-            )
-            .into());
-        }
-
-        if next_transport == "stdio"
-            && current_transport == "remote"
-            && update.command.is_none()
-            && update.transport.as_deref() == Some("stdio")
-        {
-            return Err(format!(
-                "server `{resolved_name}` uses remote transport; pass `--cmd` when converting it to stdio"
-            )
-            .into());
-        }
-
-        match update.transport.as_deref() {
-            Some("stdio") | Some("remote") => {
-                server.insert(
-                    "transport".to_string(),
-                    Value::String(next_transport.clone()),
-                );
-            }
-            Some(_) => unreachable!("unsupported transport already rejected"),
-            None if next_transport != current_transport => {
-                server.remove("transport");
-            }
-            None => {}
-        }
-
-        if next_transport == "stdio" {
-            server.remove("url");
-            server.remove("headers");
-
-            if let Some(command) = &update.command {
-                server.insert("command".to_string(), Value::String(command.clone()));
-            } else if current_transport == "remote" {
-                return Err(format!(
-                    "server `{resolved_name}` uses remote transport; pass `--cmd` when converting it to stdio"
-                )
-                .into());
-            }
-
-            if current_transport == "remote" || update.clear_args || !update.add_args.is_empty() {
-                let mut args = if update.clear_args || current_transport == "remote" {
-                    Vec::new()
-                } else {
-                    parse_toml_string_array(server.get("args"), "args", "server", &resolved_name)?
-                };
-                args.extend(update.add_args.iter().cloned());
-                server.insert(
-                    "args".to_string(),
-                    Value::Array(args.into_iter().map(Value::String).collect()),
-                );
-            }
-        } else {
-            server.remove("command");
-            server.remove("args");
-
-            let url = match &update.url {
-                Some(url) => url.clone(),
-                None => parse_remote_server_url(server, &resolved_name)?.to_string(),
-            };
-            server.insert("url".to_string(), Value::String(url));
-
-            if update.clear_headers
-                || !update.set_headers.is_empty()
-                || !update.unset_headers.is_empty()
-            {
-                let mut headers = if update.clear_headers || current_transport != "remote" {
-                    BTreeMap::new()
-                } else {
-                    parse_toml_string_table(
-                        server.get("headers"),
-                        "headers",
-                        "server",
-                        &resolved_name,
-                    )?
-                };
-                for key in &update.unset_headers {
-                    headers.remove(key);
-                }
-                for (key, value) in &update.set_headers {
-                    headers.insert(key.clone(), value.clone());
-                }
-                if headers.is_empty() {
-                    server.remove("headers");
-                } else {
-                    server.insert(
-                        "headers".to_string(),
-                        Value::Table(
-                            headers
-                                .into_iter()
-                                .map(|(key, value)| (key, Value::String(value)))
-                                .collect(),
-                        ),
-                    );
-                }
-            } else if current_transport != "remote" {
-                server.remove("headers");
-            }
-        }
-
-        if let Some(enabled) = update.enabled {
-            server.insert("enabled".to_string(), Value::Boolean(enabled));
-        }
-
-        if update.clear_env || !update.set_env.is_empty() || !update.unset_env.is_empty() {
-            let mut env = if update.clear_env {
-                BTreeMap::new()
-            } else {
-                parse_toml_string_table(server.get("env"), "env", "server", &resolved_name)?
-            };
-            for key in &update.unset_env {
-                env.remove(key);
-            }
-            for (key, value) in &update.set_env {
-                env.insert(key.clone(), value.clone());
-            }
-            if env.is_empty() {
-                server.remove("env");
-            } else {
-                server.insert(
-                    "env".to_string(),
-                    Value::Table(
-                        env.into_iter()
-                            .map(|(key, value)| (key, Value::String(value)))
-                            .collect(),
-                    ),
-                );
-            }
-        }
-
-        if update.clear_env_vars
-            || !update.add_env_vars.is_empty()
-            || !update.unset_env_vars.is_empty()
-        {
-            let mut env_vars = if update.clear_env_vars {
-                Vec::new()
-            } else {
-                parse_toml_string_array(
-                    server.get("env_vars"),
-                    "env_vars",
-                    "server",
-                    &resolved_name,
-                )?
-            };
-            env_vars.retain(|name| !update.unset_env_vars.contains(name));
-            merge_env_vars(&mut env_vars, update.add_env_vars.clone());
-            if env_vars.is_empty() {
-                server.remove("env_vars");
-            } else {
-                server.insert(
-                    "env_vars".to_string(),
-                    Value::Array(env_vars.into_iter().map(Value::String).collect()),
-                );
-            }
-        }
-
-        resolved_name
-    };
-
-    save_config_table(config_path, &config)?;
-    load_server_config(config_path, &resolved_name)
-}
-
 pub fn contains_server_name(config: &Table, requested_name: &str) -> bool {
     let normalized = sanitize_name(requested_name);
     if normalized.is_empty() {
@@ -645,58 +434,6 @@ fn insert_remote_server(
     Ok(())
 }
 
-fn parse_server_enabled(server: &Table, name: &str) -> Result<bool, Box<dyn Error>> {
-    match server.get("enabled") {
-        Some(Value::Boolean(enabled)) => Ok(*enabled),
-        Some(_) => Err(format!("server `{name}` has a non-boolean `enabled` field").into()),
-        None => Ok(true),
-    }
-}
-
-fn resolved_server_transport(server: &Table, name: &str) -> Result<&'static str, Box<dyn Error>> {
-    if let Some(transport) = configured_server_transport(server, name)? {
-        return Ok(transport);
-    }
-
-    infer_server_transport(server, name)
-}
-
-fn configured_server_transport(
-    server: &Table,
-    name: &str,
-) -> Result<Option<&'static str>, Box<dyn Error>> {
-    match server.get("transport") {
-        Some(Value::String(transport)) => match transport.as_str() {
-            "stdio" => Ok(Some("stdio")),
-            "remote" => Ok(Some("remote")),
-            other => Err(format!(
-                "server `{name}` uses unsupported transport `{other}`, only `stdio` and `remote` are supported"
-            )
-            .into()),
-        },
-        Some(_) => Err(format!("server `{name}` has a non-string `transport` field").into()),
-        None => Ok(None),
-    }
-}
-
-fn infer_server_transport(server: &Table, name: &str) -> Result<&'static str, Box<dyn Error>> {
-    let has_command = server.contains_key("command");
-    let has_url = server.contains_key("url");
-
-    match (has_command, has_url) {
-        (true, _) => Ok("stdio"),
-        (false, true) => Ok("remote"),
-        (false, false) => Err(format!("server `{name}` must define `command` or `url`").into()),
-    }
-}
-
-fn parse_remote_server_url<'a>(server: &'a Table, name: &str) -> Result<&'a str, Box<dyn Error>> {
-    server
-        .get("url")
-        .and_then(Value::as_str)
-        .ok_or_else(|| format!("server `{name}` is missing `url`").into())
-}
-
 pub(crate) fn parse_toml_string_table(
     value: Option<&Value>,
     field_name: &str,
@@ -707,15 +444,11 @@ pub(crate) fn parse_toml_string_table(
         None => Ok(BTreeMap::new()),
         Some(Value::Table(table)) => table
             .iter()
-            .map(|(key, value)| {
-                value
-                    .as_str()
-                    .map(|value| (key.clone(), value.to_string()))
-                    .ok_or_else(|| {
-                        format!(
-                            "{kind} `{name}` contains a non-string `{field_name}` value `{key}`"
-                        )
-                    })
+            .map(|(key, raw_value)| match raw_value.as_str() {
+                Some(string_value) => Ok((key.clone(), string_value.to_string())),
+                None => Err(format!(
+                    "{kind} `{name}` contains a non-string `{field_name}` value `{key}`"
+                )),
             })
             .collect::<Result<BTreeMap<_, _>, _>>()
             .map_err(Into::into),
@@ -754,146 +487,16 @@ pub(crate) fn parse_json_string_object(
         None => Ok(BTreeMap::new()),
         Some(serde_json::Value::Object(map)) => map
             .iter()
-            .map(|(key, value)| {
-                value
-                    .as_str()
-                    .map(|value| (key.clone(), value.to_string()))
-                    .ok_or_else(|| {
-                        format!(
-                            "{kind} `{name}` contains a non-string `{field_name}` value `{key}`"
-                        )
-                    })
+            .map(|(key, raw_value)| match raw_value.as_str() {
+                Some(string_value) => Ok((key.clone(), string_value.to_string())),
+                None => Err(format!(
+                    "{kind} `{name}` contains a non-string `{field_name}` value `{key}`"
+                )),
             })
             .collect::<Result<BTreeMap<_, _>, _>>()
             .map_err(Into::into),
         Some(_) => Err(format!("{kind} `{name}` has a non-object `{field_name}` field").into()),
     }
-}
-
-fn resolved_server_table<'a>(
-    config: &'a Table,
-    requested_name: &str,
-) -> Result<(String, &'a Table), Box<dyn Error>> {
-    let servers = config
-        .get("servers")
-        .and_then(Value::as_table)
-        .ok_or_else(|| "no `servers` table found in config".to_string())?;
-
-    let resolved_name = resolve_server_name(servers, requested_name)
-        .ok_or_else(|| format!("server `{requested_name}` not found"))?;
-    let server = servers
-        .get(&resolved_name)
-        .and_then(Value::as_table)
-        .ok_or_else(|| format!("server `{resolved_name}` must be a table"))?;
-
-    Ok((resolved_name, server))
-}
-
-fn resolved_server_table_mut<'a>(
-    config: &'a mut Table,
-    requested_name: &str,
-) -> Result<(String, &'a mut Table), Box<dyn Error>> {
-    let servers = config
-        .get_mut("servers")
-        .and_then(Value::as_table_mut)
-        .ok_or_else(|| "no `servers` table found in config".to_string())?;
-
-    let resolved_name = resolve_server_name(servers, requested_name)
-        .ok_or_else(|| format!("server `{requested_name}` not found"))?;
-    let server = servers
-        .get_mut(&resolved_name)
-        .and_then(Value::as_table_mut)
-        .ok_or_else(|| format!("server `{resolved_name}` must be a table"))?;
-
-    Ok((resolved_name, server))
-}
-
-fn server_config_snapshot(
-    resolved_name: &str,
-    server: &Table,
-) -> Result<ServerConfigSnapshot, Box<dyn Error>> {
-    let parsed = parse_server_entry(server, resolved_name)?;
-    let (command, args, url, headers) = match parsed.transport {
-        ParsedServerTransport::Stdio { command, args } => {
-            (Some(command), args, None, BTreeMap::new())
-        }
-        ParsedServerTransport::Remote { url, headers } => (None, Vec::new(), Some(url), headers),
-    };
-
-    Ok(ServerConfigSnapshot {
-        name: resolved_name.to_string(),
-        transport: parsed.transport_name.to_string(),
-        enabled: parsed.enabled,
-        command,
-        args,
-        url,
-        headers,
-        env: parsed.env,
-        env_vars: parsed.env_vars,
-    })
-}
-
-fn parse_server_entry(server: &Table, name: &str) -> Result<ParsedServerEntry, Box<dyn Error>> {
-    let transport_name = resolved_server_transport(server, name)?;
-    let transport = match transport_name {
-        "stdio" => {
-            let (command, args) = parse_stdio_command(server, name)?;
-            ParsedServerTransport::Stdio { command, args }
-        }
-        "remote" => ParsedServerTransport::Remote {
-            url: parse_remote_server_url(server, name)?.to_string(),
-            headers: parse_toml_string_table(server.get("headers"), "headers", "server", name)?,
-        },
-        other => {
-            return Err(format!(
-                "server `{name}` uses unsupported transport `{other}`, only `stdio` and `remote` are supported"
-            )
-            .into())
-        }
-    };
-
-    Ok(ParsedServerEntry {
-        transport_name,
-        transport,
-        enabled: parse_server_enabled(server, name)?,
-        env: parse_toml_string_table(server.get("env"), "env", "server", name)?,
-        env_vars: parse_toml_string_array(server.get("env_vars"), "env_vars", "server", name)?,
-    })
-}
-
-fn parse_stdio_command(
-    server: &Table,
-    name: &str,
-) -> Result<(String, Vec<String>), Box<dyn Error>> {
-    let command = server
-        .get("command")
-        .and_then(Value::as_str)
-        .ok_or_else(|| format!("server `{name}` is missing `command`"))?
-        .to_string();
-    let args = parse_toml_string_array(server.get("args"), "args", "server", name)?;
-
-    Ok((command, args))
-}
-
-fn has_server_name(config: &Table, name: &str) -> bool {
-    config
-        .get("servers")
-        .and_then(Value::as_table)
-        .map(|servers| servers.contains_key(name))
-        .unwrap_or(false)
-}
-
-fn resolve_server_name(servers: &Table, requested_name: &str) -> Option<String> {
-    if servers.contains_key(requested_name) {
-        return Some(requested_name.to_string());
-    }
-
-    let normalized = sanitize_name(requested_name);
-    if normalized.is_empty() {
-        return None;
-    }
-
-    servers.contains_key(&normalized).then_some(normalized)
 }
 
 pub(crate) fn merge_env_vars(target: &mut Vec<String>, additions: Vec<String>) {

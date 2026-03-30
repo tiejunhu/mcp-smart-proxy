@@ -319,13 +319,15 @@ fn resolve_toolset_name<'a>(
     toolsets: &'a [CachedToolsetRecord],
     requested_name: &str,
 ) -> Option<&'a CachedToolsetRecord> {
-    toolsets
+    if let Some(toolset) = toolsets
         .iter()
         .find(|toolset| toolset.name == requested_name)
-        .or_else(|| {
-            let sanitized = sanitize_name(requested_name);
-            toolsets.iter().find(|toolset| toolset.name == sanitized)
-        })
+    {
+        return Some(toolset);
+    }
+
+    let sanitized = sanitize_name(requested_name);
+    toolsets.iter().find(|toolset| toolset.name == sanitized)
 }
 
 fn resolve_tool_snapshot<'a>(
