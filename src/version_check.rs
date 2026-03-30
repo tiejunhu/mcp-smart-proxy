@@ -49,6 +49,19 @@ struct PathLockGuard {
     _file: File,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ManualUpdateResult {
+    pub executable_path: PathBuf,
+    pub latest_version: String,
+    pub updated: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum UpdateDecision {
+    UpdateRequired,
+    AlreadyUpToDate,
+}
+
 pub fn prepare_executable_for_background_update(cli_args: &[OsString]) {
     if let Err(error) = synchronize_current_installed_version_record() {
         print_app_warning(
@@ -99,6 +112,40 @@ pub fn print_cached_update_notice() {
             record.latest_version, CURRENT_VERSION, record.releases_url
         ),
     );
+}
+
+pub fn current_version() -> &'static str {
+    CURRENT_VERSION
+}
+
+pub async fn run_manual_self_update() -> Result<ManualUpdateResult, Box<dyn Error>> {
+    synchronize_current_installed_version_record()?;
+
+    let executable_path = std::env::current_exe()?;
+    let latest_version = fetch_latest_release_version()
+        .await?
+        .ok_or_else(|| "failed to resolve the latest release version".to_string())?;
+
+    match decide_update(CURRENT_VERSION, &latest_version)? {
+        UpdateDecision::UpdateRequired => {
+            update_cached_version_notice(Some(&latest_version))?;
+            let updated = try_auto_update(&executable_path, &latest_version).await?;
+            delete_version_update_record()?;
+            Ok(ManualUpdateResult {
+                executable_path,
+                latest_version,
+                updated,
+            })
+        }
+        UpdateDecision::AlreadyUpToDate => {
+            delete_version_update_record()?;
+            Ok(ManualUpdateResult {
+                executable_path,
+                latest_version,
+                updated: false,
+            })
+        }
+    }
 }
 
 async fn run_self_update_cycle(cli_args: &[OsString]) -> Result<(), Box<dyn Error>> {
@@ -274,6 +321,20 @@ fn should_restart_for_installed_version(current_version: &str, latest_version: &
         compare_versions(current_version, latest_version),
         Some(Ordering::Less)
     )
+}
+
+fn decide_update(
+    current_version: &str,
+    latest_version: &str,
+) -> Result<UpdateDecision, Box<dyn Error>> {
+    match compare_versions(current_version, latest_version) {
+        Some(Ordering::Less) => Ok(UpdateDecision::UpdateRequired),
+        Some(Ordering::Equal | Ordering::Greater) => Ok(UpdateDecision::AlreadyUpToDate),
+        None => Err(format!(
+            "failed to compare current version `{current_version}` with latest release `{latest_version}`"
+        )
+        .into()),
+    }
 }
 
 #[cfg(unix)]
@@ -618,5 +679,25 @@ mod tests {
     fn normalizes_release_tags() {
         assert_eq!(normalize_release_tag("0.0.20"), "v0.0.20");
         assert_eq!(normalize_release_tag("v0.0.20"), "v0.0.20");
+    }
+
+    #[test]
+    fn decides_when_manual_update_is_required() {
+        assert_eq!(
+            decide_update("0.0.22", "0.0.23").unwrap(),
+            UpdateDecision::UpdateRequired
+        );
+    }
+
+    #[test]
+    fn decides_when_manual_update_is_not_required() {
+        assert_eq!(
+            decide_update("0.0.23", "0.0.23").unwrap(),
+            UpdateDecision::AlreadyUpToDate
+        );
+        assert_eq!(
+            decide_update("0.0.24", "0.0.23").unwrap(),
+            UpdateDecision::AlreadyUpToDate
+        );
     }
 }

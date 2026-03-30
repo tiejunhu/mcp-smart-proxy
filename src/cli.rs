@@ -93,6 +93,8 @@ pub enum Command {
     Login { name: String },
     /// Clear stored OAuth credentials for one remote MCP server.
     Logout { name: String },
+    /// Update the running msp binary to the latest released version.
+    Update,
     /// Refresh cached tool metadata for one configured MCP server, or all servers when omitted.
     Reload {
         #[arg(long, value_enum)]
@@ -316,6 +318,16 @@ mod tests {
                 assert_eq!(name.as_deref(), Some("github"));
             }
             other => panic!("expected reload command, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_update_command() {
+        let cli = Cli::parse_from(["msp", "update"]);
+
+        match cli.command {
+            Some(Command::Update) => {}
+            other => panic!("expected update command, got {other:?}"),
         }
     }
 

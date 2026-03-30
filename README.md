@@ -53,6 +53,12 @@ Install a specific released version instead of the latest one:
 curl -fsSL https://raw.githubusercontent.com/cybershape/mcp-smart-proxy/master/install.sh | VERSION=v0.0.19 bash
 ```
 
+Update an existing installed `msp` binary in place:
+
+```bash
+msp update
+```
+
 After installation, run:
 
 ```bash
@@ -69,6 +75,8 @@ When you run `msp mcp`, the long-running proxy process checks GitHub Releases in
 - Concurrent self-updates for the same installed binary are serialized with sibling `.lock` files so multiple `msp` processes do not race while replacing the executable or writing the version record.
 
 Background self-update requires that the running user can write to the installed `msp` path.
+
+If you do not want to wait for the background cycle, run `msp update` to perform the same release lookup and in-place binary replacement immediately for the currently running executable path.
 
 ## Quick Start
 
@@ -241,6 +249,18 @@ Enable it again:
 ```bash
 msp enable server1
 ```
+
+### Update msp itself
+
+```bash
+msp update
+```
+
+This command checks GitHub Releases for the latest published build for the current platform and updates the currently running `msp` executable in place.
+
+- If a newer release exists, `msp` downloads it, replaces the current binary atomically, and updates the sibling latest-version record.
+- If the current binary is already at the latest release, `msp` prints a clear no-op message.
+- Manual updates use the same sibling `.lock` file strategy as background self-update so concurrent updates for the same installed binary stay serialized.
 
 These commands resolve the server by exact or normalized name and update its `enabled` flag in the config file.
 Disabled servers stay in the config and keep their cache files, but `msp reload --provider ...` without a name and `msp mcp --provider ...` skip them.
@@ -533,6 +553,8 @@ The cache is stored at:
 ```bash
 msp mcp --provider codex
 ```
+
+`msp mcp` is a stdio MCP server entrypoint, not an interactive terminal command. Start it from an MCP host such as Codex, OpenCode, or Claude Code, or install it into one of those hosts with `msp install codex`, `msp install opencode`, or `msp install claude`.
 
 Before exposing the proxy stdio MCP server upstream, this command automatically reloads every enabled configured MCP server.
 

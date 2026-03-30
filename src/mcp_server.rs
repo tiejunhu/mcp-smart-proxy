@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::error::Error;
 use std::fs;
 use std::future::Future;
+use std::io::IsTerminal;
 use std::path::Path;
 use std::process::Stdio;
 use std::sync::Arc;
@@ -35,6 +36,7 @@ use crate::types::{
 const ACTIVATE_EXTERNAL_MCP_NAME: &str = "activate_external_mcp";
 const ACTIVATE_EXTERNAL_MCP_TOOL_NAME: &str = "activate_external_mcp_tool";
 const CALL_TOOL_IN_EXTERNAL_MCP_NAME: &str = "call_tool_in_external_mcp";
+const STDIO_HOST_REQUIRED_MESSAGE: &str = "`msp mcp` is a stdio MCP server and must be started by an MCP client such as Codex, OpenCode, or Claude Code instead of running directly in a terminal";
 
 #[derive(Debug, Clone)]
 struct CachedToolsetRecord {
@@ -74,6 +76,8 @@ pub async fn serve_cached_toolsets(
     config_path: &Path,
     provider: Option<ModelProviderConfig>,
 ) -> Result<(), Box<dyn Error>> {
+    ensure_proxy_stdio_host_connection()?;
+
     reload_all_toolsets(config_path, provider.as_ref())
         .await
         .map_err(|error| {
@@ -107,13 +111,7 @@ pub async fn serve_cached_toolsets(
     let service = SmartProxyMcpServer::new(toolsets)
         .serve(stdio())
         .await
-        .map_err(|error| {
-            operation_error(
-                "mcp.serve",
-                "failed to start the proxy stdio MCP server",
-                Box::new(error),
-            )
-        })?;
+        .map_err(|error| map_proxy_serve_error(error))?;
     service.waiting().await.map_err(|error| {
         operation_error(
             "mcp.wait",
@@ -122,6 +120,44 @@ pub async fn serve_cached_toolsets(
         )
     })?;
     Ok(())
+}
+
+fn ensure_proxy_stdio_host_connection() -> Result<(), Box<dyn Error>> {
+    validate_proxy_stdio_launch(
+        std::io::stdin().is_terminal(),
+        std::io::stdout().is_terminal(),
+    )
+}
+
+fn validate_proxy_stdio_launch(
+    stdin_is_terminal: bool,
+    stdout_is_terminal: bool,
+) -> Result<(), Box<dyn Error>> {
+    if stdin_is_terminal && stdout_is_terminal {
+        return Err(operation_error(
+            "mcp.serve.stdio_host",
+            STDIO_HOST_REQUIRED_MESSAGE,
+            "stdio MCP servers require an upstream host connection over stdin/stdout".into(),
+        ));
+    }
+
+    Ok(())
+}
+
+fn map_proxy_serve_error(error: impl Error + 'static) -> Box<dyn Error> {
+    if error.to_string() == "connection closed: initialize request" {
+        return operation_error(
+            "mcp.serve.initialize",
+            STDIO_HOST_REQUIRED_MESSAGE,
+            Box::new(error),
+        );
+    }
+
+    operation_error(
+        "mcp.serve",
+        "failed to start the proxy stdio MCP server",
+        Box::new(error),
+    )
 }
 
 async fn reload_all_toolsets(
@@ -987,6 +1023,23 @@ mod tests {
         assert!(properties.contains_key("external_mcp_name"));
         assert!(properties.contains_key("tool_name"));
         assert!(properties.contains_key("args_in_json"));
+    }
+
+    #[test]
+    fn rejects_running_proxy_stdio_server_directly_in_terminal() {
+        let error = validate_proxy_stdio_launch(true, true).unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            format!("mcp.serve.stdio_host: {STDIO_HOST_REQUIRED_MESSAGE}")
+        );
+    }
+
+    #[test]
+    fn allows_running_proxy_stdio_server_when_connected_to_a_host() {
+        validate_proxy_stdio_launch(false, false).unwrap();
+        validate_proxy_stdio_launch(false, true).unwrap();
+        validate_proxy_stdio_launch(true, false).unwrap();
     }
 
     fn unique_test_home(name: &str) -> std::path::PathBuf {

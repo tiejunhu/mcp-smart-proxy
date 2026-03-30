@@ -46,7 +46,7 @@ async fn run() -> Result<(), Box<dyn Error>> {
     if matches!(&cli.command, Some(Command::Mcp { .. })) {
         version_check::prepare_executable_for_background_update(&raw_args);
         version_check::spawn_periodic_self_update(raw_args.clone());
-    } else {
+    } else if !matches!(&cli.command, Some(Command::Update)) {
         version_check::print_cached_update_notice();
     }
     let config_path = expand_tilde(&cli.config).map_err(|error| {
@@ -857,6 +857,37 @@ async fn run() -> Result<(), Box<dyn Error>> {
                     )
                 },
             );
+        }
+        Some(Command::Update) => {
+            let update_result = version_check::run_manual_self_update()
+                .await
+                .map_err(|error| {
+                    operation_error(
+                        "cli.update",
+                        "failed to update the running msp binary",
+                        error,
+                    )
+                })?;
+            let executable_path = format_path_for_display(&update_result.executable_path);
+            if update_result.updated {
+                print_app_event(
+                    "cli.update",
+                    format!(
+                        "Updated msp from v{} to v{} at {}",
+                        version_check::current_version(),
+                        update_result.latest_version,
+                        executable_path
+                    ),
+                );
+            } else {
+                print_app_event(
+                    "cli.update",
+                    format!(
+                        "msp is already up to date at v{} ({})",
+                        update_result.latest_version, executable_path
+                    ),
+                );
+            }
         }
         Some(Command::Reload {
             provider,
