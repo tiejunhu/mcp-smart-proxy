@@ -3,6 +3,7 @@
 - Use English for all code, comments, and documentation, to ensure that it is accessible to the widest possible audience.
 - Keep all usage of this project in README.md, update it as needed, and make sure it is clear and concise.
 - Before making any changes, present the plan (in the same language as user's input) to the user and ask the user for approving.
+- Reduce complexity, during reading and editing the code, find complexity and try to reduce it.
 
 # Code edit
 

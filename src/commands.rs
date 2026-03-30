@@ -463,10 +463,17 @@ fn run_remove_command(config_path: &Path, name: &str) -> Result<(), Box<dyn Erro
     Ok(())
 }
 
-async fn run_login_command(config_path: &Path, name: &str) -> Result<(), Box<dyn Error>> {
+fn load_remote_server_for_auth(
+    config_path: &Path,
+    requested_name: &str,
+    load_stage: &'static str,
+    resolve_stage: &'static str,
+    unsupported_stage: &'static str,
+    unsupported_message: &'static str,
+) -> Result<(String, crate::types::ConfiguredServer), Box<dyn Error>> {
     let config = load_config_table(config_path).map_err(|error| {
         operation_error(
-            "cli.login.load_config",
+            load_stage,
             format!(
                 "failed to load config from {}",
                 format_path_for_display(config_path)
@@ -474,21 +481,34 @@ async fn run_login_command(config_path: &Path, name: &str) -> Result<(), Box<dyn
             error,
         )
     })?;
-    let (resolved_name, server) =
-        crate::config::configured_server(&config, name).map_err(|error| {
+    let (resolved_name, server) = crate::config::configured_server(&config, requested_name)
+        .map_err(|error| {
             operation_error(
-                "cli.login.resolve_server",
-                format!("failed to resolve configured server `{name}`"),
+                resolve_stage,
+                format!("failed to resolve configured server `{requested_name}`"),
                 error,
             )
         })?;
     if !matches!(server.transport, ConfiguredTransport::Remote { .. }) {
         return Err(operation_error(
-            "cli.login.unsupported_transport",
+            unsupported_stage,
             format!("MCP server `{resolved_name}` is not configured as `remote`"),
-            "only remote servers support OAuth login".into(),
+            unsupported_message.into(),
         ));
     }
+
+    Ok((resolved_name, server))
+}
+
+async fn run_login_command(config_path: &Path, name: &str) -> Result<(), Box<dyn Error>> {
+    let (resolved_name, server) = load_remote_server_for_auth(
+        config_path,
+        name,
+        "cli.login.load_config",
+        "cli.login.resolve_server",
+        "cli.login.unsupported_transport",
+        "only remote servers support OAuth login",
+    )?;
 
     login_remote_server(&resolved_name, &server)
         .await
@@ -507,31 +527,14 @@ async fn run_login_command(config_path: &Path, name: &str) -> Result<(), Box<dyn
 }
 
 fn run_logout_command(config_path: &Path, name: &str) -> Result<(), Box<dyn Error>> {
-    let config = load_config_table(config_path).map_err(|error| {
-        operation_error(
-            "cli.logout.load_config",
-            format!(
-                "failed to load config from {}",
-                format_path_for_display(config_path)
-            ),
-            error,
-        )
-    })?;
-    let (resolved_name, server) =
-        crate::config::configured_server(&config, name).map_err(|error| {
-            operation_error(
-                "cli.logout.resolve_server",
-                format!("failed to resolve configured server `{name}`"),
-                error,
-            )
-        })?;
-    if !matches!(server.transport, ConfiguredTransport::Remote { .. }) {
-        return Err(operation_error(
-            "cli.logout.unsupported_transport",
-            format!("MCP server `{resolved_name}` is not configured as `remote`"),
-            "only remote servers store OAuth credentials".into(),
-        ));
-    }
+    let (resolved_name, _server) = load_remote_server_for_auth(
+        config_path,
+        name,
+        "cli.logout.load_config",
+        "cli.logout.resolve_server",
+        "cli.logout.unsupported_transport",
+        "only remote servers store OAuth credentials",
+    )?;
 
     let removed = logout_remote_server(&resolved_name).map_err(|error| {
         operation_error(

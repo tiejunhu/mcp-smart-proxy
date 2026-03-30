@@ -130,6 +130,16 @@ struct JsonImportAdapter {
     parse_imported_server: ParseJsonImportedServer,
 }
 
+enum InstallDecision {
+    AlreadyInstalled {
+        name: String,
+    },
+    Write {
+        name: String,
+        status: super::InstallMcpServerStatus,
+    },
+}
+
 fn load_provider_import_plan(
     path: fn() -> Result<std::path::PathBuf, Box<dyn Error>>,
     loader: fn(&Path) -> Result<ImportPlan, Box<dyn Error>>,
@@ -137,6 +147,63 @@ fn load_provider_import_plan(
     let path = path()?;
     let plan = loader(&path)?;
     Ok((path, plan))
+}
+
+fn decide_self_server_install<'a>(
+    existing_server: Option<(String, bool)>,
+    existing_names: impl Iterator<Item = &'a str>,
+) -> InstallDecision {
+    match existing_server {
+        Some((name, true)) => InstallDecision::AlreadyInstalled { name },
+        Some((name, false)) => InstallDecision::Write {
+            name,
+            status: super::InstallMcpServerStatus::Updated,
+        },
+        None => InstallDecision::Write {
+            name: super::self_server::next_available_server_name(existing_names),
+            status: super::InstallMcpServerStatus::Installed,
+        },
+    }
+}
+
+fn build_replace_result(
+    config_path: &Path,
+    backup_path: &Path,
+    backed_up_server_count: usize,
+    removed_server_count: usize,
+) -> super::ReplaceMcpServersResult {
+    super::ReplaceMcpServersResult {
+        config_path: config_path.to_path_buf(),
+        backup_path: backup_path.to_path_buf(),
+        backed_up_server_count,
+        removed_server_count,
+    }
+}
+
+fn build_restore_result(
+    config_path: &Path,
+    backup_path: &Path,
+    removed_self_server_count: usize,
+    restored_server_count: usize,
+) -> super::RestoreMcpServersResult {
+    super::RestoreMcpServersResult {
+        config_path: config_path.to_path_buf(),
+        backup_path: backup_path.to_path_buf(),
+        removed_self_server_count,
+        restored_server_count,
+    }
+}
+
+fn ensure_import_config_exists(path: &Path, config_label: &str) -> Result<(), Box<dyn Error>> {
+    if path.exists() {
+        return Ok(());
+    }
+
+    Err(format!(
+        "{config_label} config not found at {}",
+        format_path_for_display(path)
+    )
+    .into())
 }
 
 fn install_toml_mcp_server(
@@ -150,7 +217,7 @@ fn install_toml_mcp_server(
     let mut config = super::local::load_config_table(&config_path)?;
     let desired_server = super::self_server::proxy_stdio_server(provider_name);
 
-    let (name, status) = {
+    let decision = {
         let servers_value = config
             .entry(servers_key)
             .or_insert_with(|| Value::Table(Table::new()));
@@ -158,26 +225,26 @@ fn install_toml_mcp_server(
             .as_table_mut()
             .ok_or_else(|| servers_error.to_string())?;
 
-        match inspect_self_server(servers, provider_name) {
-            Some((name, true)) => {
-                return Ok(super::InstallMcpServerResult {
-                    name,
-                    config_path,
-                    status: super::InstallMcpServerStatus::AlreadyInstalled,
-                });
-            }
-            Some((name, false)) => {
-                servers.insert(name.clone(), build_server_value(&desired_server));
-                (name, super::InstallMcpServerStatus::Updated)
-            }
-            None => {
-                let name = super::self_server::next_available_server_name(
-                    servers.keys().map(String::as_str),
-                );
-                servers.insert(name.clone(), build_server_value(&desired_server));
-                (name, super::InstallMcpServerStatus::Installed)
-            }
+        let decision = decide_self_server_install(
+            inspect_self_server(servers, provider_name),
+            servers.keys().map(String::as_str),
+        );
+        if let InstallDecision::Write { name, .. } = &decision {
+            servers.insert(name.clone(), build_server_value(&desired_server));
         }
+
+        decision
+    };
+
+    let (name, status) = match decision {
+        InstallDecision::AlreadyInstalled { name } => {
+            return Ok(super::InstallMcpServerResult {
+                name,
+                config_path,
+                status: super::InstallMcpServerStatus::AlreadyInstalled,
+            });
+        }
+        InstallDecision::Write { name, status } => (name, status),
     };
 
     super::local::save_config_table(&config_path, &config)?;
@@ -197,7 +264,7 @@ fn install_json_mcp_server(
     let mut config = (adapter.load_config)(&config_path)?;
     let desired_server = super::self_server::proxy_stdio_server(provider_name);
 
-    let (name, status) = {
+    let decision = {
         let root = config
             .as_object_mut()
             .ok_or_else(|| adapter.root_error.to_string())?;
@@ -208,26 +275,26 @@ fn install_json_mcp_server(
             .as_object_mut()
             .ok_or_else(|| adapter.servers_error.to_string())?;
 
-        match (adapter.inspect_self_server)(servers, provider_name) {
-            Some((name, true)) => {
-                return Ok(super::InstallMcpServerResult {
-                    name,
-                    config_path,
-                    status: super::InstallMcpServerStatus::AlreadyInstalled,
-                });
-            }
-            Some((name, false)) => {
-                servers.insert(name.clone(), (adapter.build_server_value)(&desired_server));
-                (name, super::InstallMcpServerStatus::Updated)
-            }
-            None => {
-                let name = super::self_server::next_available_server_name(
-                    servers.keys().map(String::as_str),
-                );
-                servers.insert(name.clone(), (adapter.build_server_value)(&desired_server));
-                (name, super::InstallMcpServerStatus::Installed)
-            }
+        let decision = decide_self_server_install(
+            (adapter.inspect_self_server)(servers, provider_name),
+            servers.keys().map(String::as_str),
+        );
+        if let InstallDecision::Write { name, .. } = &decision {
+            servers.insert(name.clone(), (adapter.build_server_value)(&desired_server));
         }
+
+        decision
+    };
+
+    let (name, status) = match decision {
+        InstallDecision::AlreadyInstalled { name } => {
+            return Ok(super::InstallMcpServerResult {
+                name,
+                config_path,
+                status: super::InstallMcpServerStatus::AlreadyInstalled,
+            });
+        }
+        InstallDecision::Write { name, status } => (name, status),
     };
 
     (adapter.save_config)(&config_path, &config)?;
@@ -261,12 +328,12 @@ fn replace_toml_mcp_servers_from_path(
         super::local::save_config_table(config_path, &config)?;
     }
 
-    Ok(super::ReplaceMcpServersResult {
-        config_path: config_path.to_path_buf(),
-        backup_path,
-        backed_up_server_count: backup_servers.len(),
-        removed_server_count: existing_servers.len(),
-    })
+    Ok(build_replace_result(
+        config_path,
+        &backup_path,
+        backup_servers.len(),
+        existing_servers.len(),
+    ))
 }
 
 fn replace_json_mcp_servers_from_path(
@@ -291,12 +358,12 @@ fn replace_json_mcp_servers_from_path(
         (adapter.save_config)(config_path, &config)?;
     }
 
-    Ok(super::ReplaceMcpServersResult {
-        config_path: config_path.to_path_buf(),
-        backup_path,
-        backed_up_server_count: backup_servers.len(),
-        removed_server_count: existing_servers.len(),
-    })
+    Ok(build_replace_result(
+        config_path,
+        &backup_path,
+        backup_servers.len(),
+        existing_servers.len(),
+    ))
 }
 
 fn restore_toml_mcp_servers_from_path(
@@ -317,12 +384,12 @@ fn restore_toml_mcp_servers_from_path(
     (adapter.merge_into_target)(&mut config, &restored_servers)?;
     super::local::save_config_table(config_path, &config)?;
 
-    Ok(super::RestoreMcpServersResult {
-        config_path: config_path.to_path_buf(),
-        backup_path,
+    Ok(build_restore_result(
+        config_path,
+        &backup_path,
         removed_self_server_count,
-        restored_server_count: restored_servers.len(),
-    })
+        restored_servers.len(),
+    ))
 }
 
 fn restore_json_mcp_servers_from_path(
@@ -343,26 +410,19 @@ fn restore_json_mcp_servers_from_path(
     (adapter.merge_into_target)(&mut config, &restored_servers)?;
     (adapter.save_config)(config_path, &config)?;
 
-    Ok(super::RestoreMcpServersResult {
-        config_path: config_path.to_path_buf(),
-        backup_path,
+    Ok(build_restore_result(
+        config_path,
+        &backup_path,
         removed_self_server_count,
-        restored_server_count: restored_servers.len(),
-    })
+        restored_servers.len(),
+    ))
 }
 
 fn load_toml_import_plan_from_path(
     path: &Path,
     adapter: TomlImportAdapter,
 ) -> Result<ImportPlan, Box<dyn Error>> {
-    if !path.exists() {
-        return Err(format!(
-            "{} config not found at {}",
-            adapter.config_label,
-            format_path_for_display(path)
-        )
-        .into());
-    }
+    ensure_import_config_exists(path, adapter.config_label)?;
 
     let config = super::local::load_config_table(path)?;
     let servers = config
@@ -389,14 +449,7 @@ fn load_json_import_plan_from_path(
     path: &Path,
     adapter: JsonImportAdapter,
 ) -> Result<ImportPlan, Box<dyn Error>> {
-    if !path.exists() {
-        return Err(format!(
-            "{} config not found at {}",
-            adapter.config_label,
-            format_path_for_display(path)
-        )
-        .into());
-    }
+    ensure_import_config_exists(path, adapter.config_label)?;
 
     let config = load_json_config(path)?;
     let servers = config

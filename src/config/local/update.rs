@@ -7,7 +7,8 @@ use toml::{Table, Value};
 use super::{
     UpdateServerConfig, load_config_table, load_server_config, looks_like_url, merge_env_vars,
     parse_remote_server_url, parse_toml_string_array, parse_toml_string_table,
-    resolved_server_table_mut, resolved_server_transport, save_config_table,
+    resolved_server_table_mut, resolved_server_transport, save_config_table, upsert_string_array,
+    upsert_string_table,
 };
 
 struct ServerTransportUpdate {
@@ -262,31 +263,4 @@ fn apply_env_vars_update(
     upsert_string_array(server, "env_vars", env_vars);
 
     Ok(())
-}
-
-fn upsert_string_table(server: &mut Table, field_name: &str, values: BTreeMap<String, String>) {
-    if values.is_empty() {
-        server.remove(field_name);
-    } else {
-        server.insert(
-            field_name.to_string(),
-            Value::Table(
-                values
-                    .into_iter()
-                    .map(|(key, value)| (key, Value::String(value)))
-                    .collect(),
-            ),
-        );
-    }
-}
-
-fn upsert_string_array(server: &mut Table, field_name: &str, values: Vec<String>) {
-    if values.is_empty() {
-        server.remove(field_name);
-    } else {
-        server.insert(
-            field_name.to_string(),
-            Value::Array(values.into_iter().map(Value::String).collect()),
-        );
-    }
 }

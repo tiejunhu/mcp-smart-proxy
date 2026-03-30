@@ -15,7 +15,7 @@ use rmcp::{
     service::{RequestContext, RunningService, ServiceError},
     transport::stdio,
 };
-use serde::Deserialize;
+use serde::{Deserialize, de::DeserializeOwned};
 use serde_json::{Map as JsonMap, Value as JsonValue, json};
 use tokio::sync::Mutex;
 use toml::{Table, Value};
@@ -337,6 +337,57 @@ fn resolve_tool_snapshot<'a>(
     toolset.tools.iter().find(|tool| tool.name == tool_name)
 }
 
+fn available_toolset_names(toolsets: &[CachedToolsetRecord]) -> Vec<String> {
+    toolsets
+        .iter()
+        .map(|toolset| toolset.name.clone())
+        .collect()
+}
+
+fn available_tool_names(toolset: &CachedToolsetRecord) -> Vec<String> {
+    toolset.tools.iter().map(|tool| tool.name.clone()).collect()
+}
+
+fn resolve_toolset_or_error<'a>(
+    toolsets: &'a [CachedToolsetRecord],
+    requested_name: &str,
+) -> Result<&'a CachedToolsetRecord, McpError> {
+    resolve_toolset_name(toolsets, requested_name).ok_or_else(|| {
+        McpError::invalid_params(
+            format!("unknown external MCP server `{requested_name}`"),
+            Some(json!({
+                "available_external_mcps": available_toolset_names(toolsets)
+            })),
+        )
+    })
+}
+
+fn resolve_tool_snapshot_or_error<'a>(
+    toolset: &'a CachedToolsetRecord,
+    tool_name: &str,
+) -> Result<&'a ToolSnapshot, McpError> {
+    resolve_tool_snapshot(toolset, tool_name).ok_or_else(|| {
+        McpError::invalid_params(
+            format!(
+                "unknown tool `{tool_name}` in external MCP server `{}`",
+                toolset.name
+            ),
+            Some(json!({
+                "available_tools": available_tool_names(toolset)
+            })),
+        )
+    })
+}
+
+fn parse_tool_request<T: DeserializeOwned>(
+    tool_name: &str,
+    arguments: JsonMap<String, JsonValue>,
+) -> Result<T, McpError> {
+    serde_json::from_value(JsonValue::Object(arguments)).map_err(|error| {
+        McpError::invalid_params(format!("invalid {tool_name} arguments: {error}"), None)
+    })
+}
+
 fn tool_description_preview(tool: &ToolSnapshot) -> String {
     const MAX_DESCRIPTION_CHARS: usize = 80;
     const ELLIPSIS: &str = "...";
@@ -544,92 +595,23 @@ impl ServerHandler for SmartProxyMcpServer {
         match request.name.as_ref() {
             ACTIVATE_EXTERNAL_MCP_NAME => {
                 let params: ActivateExternalMcpRequest =
-                    serde_json::from_value(JsonValue::Object(arguments)).map_err(|error| {
-                        McpError::invalid_params(
-                            format!("invalid activate_external_mcp arguments: {error}"),
-                            None,
-                        )
-                    })?;
-
-                let Some(toolset) = resolve_toolset_name(&self.toolsets, &params.external_mcp_name)
-                else {
-                    return Err(McpError::invalid_params(
-                        format!("unknown external MCP server `{}`", params.external_mcp_name),
-                        Some(json!({
-                            "available_external_mcps": self
-                                .toolsets
-                                .iter()
-                                .map(|toolset| toolset.name.clone())
-                                .collect::<Vec<_>>()
-                        })),
-                    ));
-                };
+                    parse_tool_request(ACTIVATE_EXTERNAL_MCP_NAME, arguments)?;
+                let toolset = resolve_toolset_or_error(&self.toolsets, &params.external_mcp_name)?;
 
                 Ok(build_activate_tool_result(toolset))
             }
             ACTIVATE_EXTERNAL_MCP_TOOL_NAME => {
                 let params: ActivateExternalMcpToolRequest =
-                    serde_json::from_value(JsonValue::Object(arguments)).map_err(|error| {
-                        McpError::invalid_params(
-                            format!("invalid activate_external_mcp_tool arguments: {error}"),
-                            None,
-                        )
-                    })?;
-
-                let Some(toolset) = resolve_toolset_name(&self.toolsets, &params.external_mcp_name)
-                else {
-                    return Err(McpError::invalid_params(
-                        format!("unknown external MCP server `{}`", params.external_mcp_name),
-                        Some(json!({
-                            "available_external_mcps": self
-                                .toolsets
-                                .iter()
-                                .map(|toolset| toolset.name.clone())
-                                .collect::<Vec<_>>()
-                        })),
-                    ));
-                };
-
-                let Some(tool) = resolve_tool_snapshot(toolset, &params.tool_name) else {
-                    return Err(McpError::invalid_params(
-                        format!(
-                            "unknown tool `{}` in external MCP server `{}`",
-                            params.tool_name, toolset.name
-                        ),
-                        Some(json!({
-                            "available_tools": toolset
-                                .tools
-                                .iter()
-                                .map(|tool| tool.name.clone())
-                                .collect::<Vec<_>>()
-                        })),
-                    ));
-                };
+                    parse_tool_request(ACTIVATE_EXTERNAL_MCP_TOOL_NAME, arguments)?;
+                let toolset = resolve_toolset_or_error(&self.toolsets, &params.external_mcp_name)?;
+                let tool = resolve_tool_snapshot_or_error(toolset, &params.tool_name)?;
 
                 Ok(build_activate_tool_detail_result(tool))
             }
             CALL_TOOL_IN_EXTERNAL_MCP_NAME => {
                 let params: CallToolInExternalMcpRequest =
-                    serde_json::from_value(JsonValue::Object(arguments)).map_err(|error| {
-                        McpError::invalid_params(
-                            format!("invalid {} arguments: {error}", request.name),
-                            None,
-                        )
-                    })?;
-
-                let Some(toolset) = resolve_toolset_name(&self.toolsets, &params.external_mcp_name)
-                else {
-                    return Err(McpError::invalid_params(
-                        format!("unknown external MCP server `{}`", params.external_mcp_name),
-                        Some(json!({
-                            "available_external_mcps": self
-                                .toolsets
-                                .iter()
-                                .map(|toolset| toolset.name.clone())
-                                .collect::<Vec<_>>()
-                        })),
-                    ));
-                };
+                    parse_tool_request(CALL_TOOL_IN_EXTERNAL_MCP_NAME, arguments)?;
+                let toolset = resolve_toolset_or_error(&self.toolsets, &params.external_mcp_name)?;
 
                 let arguments = parse_tool_arguments_json(&params.args_in_json)?;
                 let client = self.get_or_connect_client(toolset).await?;

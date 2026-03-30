@@ -27,30 +27,51 @@ pub(crate) use schema::{
 };
 pub use update::update_server_config;
 
+struct ServerRecordDraft {
+    transport: ServerTransportDraft,
+    enabled: bool,
+    env: BTreeMap<String, String>,
+    env_vars: Vec<String>,
+}
+
+enum ServerTransportDraft {
+    Stdio(StdioServer),
+    Remote {
+        url: String,
+        headers: BTreeMap<String, String>,
+    },
+}
+
 pub fn add_server(
     config_path: &Path,
     name: &str,
     raw_command: Vec<String>,
 ) -> Result<String, Box<dyn Error>> {
     if raw_command.len() == 1 && looks_like_url(&raw_command[0]) {
-        return save_remote_server(
+        return save_server(
             config_path,
             name,
-            raw_command[0].clone(),
-            BTreeMap::new(),
-            true,
-            BTreeMap::new(),
-            Vec::new(),
+            ServerRecordDraft {
+                transport: ServerTransportDraft::Remote {
+                    url: raw_command[0].clone(),
+                    headers: BTreeMap::new(),
+                },
+                enabled: true,
+                env: BTreeMap::new(),
+                env_vars: Vec::new(),
+            },
         );
     }
 
-    save_stdio_server(
+    save_server(
         config_path,
         name,
-        raw_command,
-        true,
-        BTreeMap::new(),
-        Vec::new(),
+        ServerRecordDraft {
+            transport: ServerTransportDraft::Stdio(StdioServer::from_command(raw_command)?),
+            enabled: true,
+            env: BTreeMap::new(),
+            env_vars: Vec::new(),
+        },
     )
 }
 
@@ -59,74 +80,44 @@ pub fn import_server(
     server: &ImportableServer,
 ) -> Result<String, Box<dyn Error>> {
     if let Some(url) = &server.url {
-        return save_remote_server(
+        return save_server(
             config_path,
             &server.name,
-            url.clone(),
-            server.headers.clone(),
-            server.enabled,
-            server.env.clone(),
-            server.env_vars.clone(),
+            ServerRecordDraft {
+                transport: ServerTransportDraft::Remote {
+                    url: url.clone(),
+                    headers: server.headers.clone(),
+                },
+                enabled: server.enabled,
+                env: server.env.clone(),
+                env_vars: server.env_vars.clone(),
+            },
         );
     }
 
-    save_stdio_server(
+    save_server(
         config_path,
         &server.name,
-        server.command.clone(),
-        server.enabled,
-        server.env.clone(),
-        server.env_vars.clone(),
+        ServerRecordDraft {
+            transport: ServerTransportDraft::Stdio(StdioServer::from_command(
+                server.command.clone(),
+            )?),
+            enabled: server.enabled,
+            env: server.env.clone(),
+            env_vars: server.env_vars.clone(),
+        },
     )
 }
 
-fn save_stdio_server(
+fn save_server(
     config_path: &Path,
     name: &str,
-    raw_command: Vec<String>,
-    enabled: bool,
-    env: BTreeMap<String, String>,
-    env_vars: Vec<String>,
+    server: ServerRecordDraft,
 ) -> Result<String, Box<dyn Error>> {
-    if is_self_server_command(&raw_command) {
-        return Err("cannot add `msp mcp` as a managed server".into());
-    }
-    let server = StdioServer::from_command(raw_command)?;
-
+    validate_new_server(&server)?;
     let mut config = load_config_table(config_path)?;
-    let name = sanitize_name(name);
-    if name.is_empty() {
-        return Err("server name must contain at least one ASCII letter or digit".into());
-    }
-    if has_server_name(&config, &name) {
-        return Err(format!("server `{name}` already exists").into());
-    }
-
-    insert_server(&mut config, &name, &server, enabled, env, env_vars)?;
-    save_config_table(config_path, &config)?;
-
-    Ok(name)
-}
-
-fn save_remote_server(
-    config_path: &Path,
-    name: &str,
-    url: String,
-    headers: BTreeMap<String, String>,
-    enabled: bool,
-    env: BTreeMap<String, String>,
-    env_vars: Vec<String>,
-) -> Result<String, Box<dyn Error>> {
-    let mut config = load_config_table(config_path)?;
-    let name = sanitize_name(name);
-    if name.is_empty() {
-        return Err("server name must contain at least one ASCII letter or digit".into());
-    }
-    if has_server_name(&config, &name) {
-        return Err(format!("server `{name}` already exists").into());
-    }
-
-    insert_remote_server(&mut config, &name, &url, headers, enabled, env, env_vars)?;
+    let name = validate_new_server_name(&config, name)?;
+    insert_server(&mut config, &name, server)?;
     save_config_table(config_path, &config)?;
 
     Ok(name)
@@ -339,99 +330,70 @@ pub fn contains_server_name(config: &Table, requested_name: &str) -> bool {
 fn insert_server(
     config: &mut Table,
     name: &str,
-    server: &StdioServer,
-    enabled: bool,
-    env: BTreeMap<String, String>,
-    env_vars: Vec<String>,
+    server: ServerRecordDraft,
 ) -> Result<(), Box<dyn Error>> {
-    let servers_value = config
-        .entry("servers")
-        .or_insert_with(|| Value::Table(Table::new()));
-    let servers = servers_value
-        .as_table_mut()
-        .ok_or_else(|| "`servers` in config must be a table".to_string())?;
-
-    let mut server_table = Table::new();
-    server_table.insert("command".to_string(), Value::String(server.command.clone()));
-    server_table.insert(
-        "args".to_string(),
-        Value::Array(server.args.iter().cloned().map(Value::String).collect()),
-    );
-    if !enabled {
-        server_table.insert("enabled".to_string(), Value::Boolean(false));
-    }
-    if !env.is_empty() {
-        server_table.insert(
-            "env".to_string(),
-            Value::Table(
-                env.into_iter()
-                    .map(|(key, value)| (key, Value::String(value)))
-                    .collect(),
-            ),
-        );
-    }
-    if !env_vars.is_empty() {
-        server_table.insert(
-            "env_vars".to_string(),
-            Value::Array(env_vars.into_iter().map(Value::String).collect()),
-        );
-    }
-
-    servers.insert(name.to_string(), Value::Table(server_table));
+    let servers = servers_table_mut(config)?;
+    servers.insert(name.to_string(), Value::Table(build_server_table(server)));
     Ok(())
 }
 
-fn insert_remote_server(
-    config: &mut Table,
-    name: &str,
-    url: &str,
-    headers: BTreeMap<String, String>,
-    enabled: bool,
-    env: BTreeMap<String, String>,
-    env_vars: Vec<String>,
-) -> Result<(), Box<dyn Error>> {
+fn validate_new_server(server: &ServerRecordDraft) -> Result<(), Box<dyn Error>> {
+    if let ServerTransportDraft::Stdio(stdio_server) = &server.transport
+        && is_self_server_command(&stdio_server.raw_command())
+    {
+        return Err("cannot add `msp mcp` as a managed server".into());
+    }
+
+    Ok(())
+}
+
+fn validate_new_server_name(config: &Table, name: &str) -> Result<String, Box<dyn Error>> {
+    let name = sanitize_name(name);
+    if name.is_empty() {
+        return Err("server name must contain at least one ASCII letter or digit".into());
+    }
+    if has_server_name(config, &name) {
+        return Err(format!("server `{name}` already exists").into());
+    }
+
+    Ok(name)
+}
+
+fn servers_table_mut(config: &mut Table) -> Result<&mut Table, Box<dyn Error>> {
     let servers_value = config
         .entry("servers")
         .or_insert_with(|| Value::Table(Table::new()));
-    let servers = servers_value
+    servers_value
         .as_table_mut()
-        .ok_or_else(|| "`servers` in config must be a table".to_string())?;
+        .ok_or_else(|| "`servers` in config must be a table".to_string().into())
+}
+
+fn build_server_table(server: ServerRecordDraft) -> Table {
+    let ServerRecordDraft {
+        transport,
+        enabled,
+        env,
+        env_vars,
+    } = server;
 
     let mut server_table = Table::new();
-    server_table.insert("url".to_string(), Value::String(url.to_string()));
-    if !headers.is_empty() {
-        server_table.insert(
-            "headers".to_string(),
-            Value::Table(
-                headers
-                    .into_iter()
-                    .map(|(key, value)| (key, Value::String(value)))
-                    .collect(),
-            ),
-        );
+    match transport {
+        ServerTransportDraft::Stdio(server) => {
+            server_table.insert("command".to_string(), Value::String(server.command));
+            upsert_string_array(&mut server_table, "args", server.args);
+        }
+        ServerTransportDraft::Remote { url, headers } => {
+            server_table.insert("url".to_string(), Value::String(url));
+            upsert_string_table(&mut server_table, "headers", headers);
+        }
     }
     if !enabled {
         server_table.insert("enabled".to_string(), Value::Boolean(false));
     }
-    if !env.is_empty() {
-        server_table.insert(
-            "env".to_string(),
-            Value::Table(
-                env.into_iter()
-                    .map(|(key, value)| (key, Value::String(value)))
-                    .collect(),
-            ),
-        );
-    }
-    if !env_vars.is_empty() {
-        server_table.insert(
-            "env_vars".to_string(),
-            Value::Array(env_vars.into_iter().map(Value::String).collect()),
-        );
-    }
+    upsert_string_table(&mut server_table, "env", env);
+    upsert_string_array(&mut server_table, "env_vars", env_vars);
 
-    servers.insert(name.to_string(), Value::Table(server_table));
-    Ok(())
+    server_table
 }
 
 pub(crate) fn parse_toml_string_table(
@@ -496,6 +458,37 @@ pub(crate) fn parse_json_string_object(
             .collect::<Result<BTreeMap<_, _>, _>>()
             .map_err(Into::into),
         Some(_) => Err(format!("{kind} `{name}` has a non-object `{field_name}` field").into()),
+    }
+}
+
+pub(crate) fn upsert_string_table(
+    server: &mut Table,
+    field_name: &str,
+    values: BTreeMap<String, String>,
+) {
+    if values.is_empty() {
+        server.remove(field_name);
+    } else {
+        server.insert(
+            field_name.to_string(),
+            Value::Table(
+                values
+                    .into_iter()
+                    .map(|(key, value)| (key, Value::String(value)))
+                    .collect(),
+            ),
+        );
+    }
+}
+
+pub(crate) fn upsert_string_array(server: &mut Table, field_name: &str, values: Vec<String>) {
+    if values.is_empty() {
+        server.remove(field_name);
+    } else {
+        server.insert(
+            field_name.to_string(),
+            Value::Array(values.into_iter().map(Value::String).collect()),
+        );
     }
 }
 
