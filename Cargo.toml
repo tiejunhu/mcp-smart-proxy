@@ -16,10 +16,12 @@ chrono = { version = "0.4.44", features = ["clock"] }
 clap = { version = "4.6.0", features = ["derive", "env"] }
 futures = "0.3.32"
 async-trait = "0.1.89"
+flate2 = "1.1.5"
 reqwest = { version = "0.13.2", default-features = false, features = ["json", "rustls", "stream"] }
 rmcp = { version = "1.3.0", features = ["auth", "client", "server", "transport-child-process", "transport-io", "transport-streamable-http-client", "transport-streamable-http-client-reqwest"] }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.149"
+tar = "0.4.44"
 tokio = { version = "1.50.0", features = ["fs", "io-util", "macros", "net", "process", "rt-multi-thread", "sync", "time"] }
 toml = "1.1.0"
 webbrowser = "1.2.0"

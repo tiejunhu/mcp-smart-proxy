@@ -59,6 +59,20 @@ pub fn version_check_record_path_from_home(home: &Path) -> Result<PathBuf, Box<d
     Ok(cache_dir_path_from_home(home)?.join("version-update.json"))
 }
 
+pub fn installed_version_record_path(executable_path: &Path) -> Result<PathBuf, Box<dyn Error>> {
+    let file_name = executable_path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .ok_or_else(|| "failed to derive executable file name".to_string())?;
+    Ok(executable_path.with_file_name(format!("{file_name}.latest-version.json")))
+}
+
+pub fn sibling_lock_path(path: &Path) -> PathBuf {
+    let mut file_name = path.file_name().map(ToOwned::to_owned).unwrap_or_default();
+    file_name.push(".lock");
+    path.with_file_name(file_name)
+}
+
 pub fn sibling_backup_path(path: &Path, suffix: &str) -> PathBuf {
     let parent = path.parent().unwrap_or_else(|| Path::new(""));
     let stem = path
@@ -138,5 +152,22 @@ mod tests {
         let path = oauth_credentials_path_from_home(&home, "demo").unwrap();
 
         assert_eq!(path, home.join(".cache/mcp-smart-proxy/oauth/demo.json"));
+    }
+
+    #[test]
+    fn builds_installed_version_record_next_to_executable() {
+        let path = installed_version_record_path(Path::new("/usr/local/bin/msp")).unwrap();
+
+        assert_eq!(
+            path,
+            PathBuf::from("/usr/local/bin/msp.latest-version.json")
+        );
+    }
+
+    #[test]
+    fn builds_sibling_lock_path() {
+        let path = sibling_lock_path(Path::new("/tmp/version.json"));
+
+        assert_eq!(path, PathBuf::from("/tmp/version.json.lock"));
     }
 }

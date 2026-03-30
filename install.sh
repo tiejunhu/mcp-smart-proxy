@@ -138,21 +138,6 @@ default_install_dir() {
   fi
 
   if [[ "$(id -u)" -eq 0 ]]; then
-    if [[ -d "/opt/homebrew/bin" ]]; then
-      printf '/opt/homebrew/bin\n'
-      return
-    fi
-
-    printf '/usr/local/bin\n'
-    return
-  fi
-
-  if [[ -d "/opt/homebrew/bin" && -w "/opt/homebrew/bin" ]]; then
-    printf '/opt/homebrew/bin\n'
-    return
-  fi
-
-  if [[ -d "/usr/local/bin" && -w "/usr/local/bin" ]]; then
     printf '/usr/local/bin\n'
     return
   fi

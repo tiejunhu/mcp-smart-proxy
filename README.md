@@ -23,7 +23,7 @@ Your Agents see only these three tools. When they want to use a tool from a MCP 
 
 ## Requirements
 
-- Homebrew, or `curl`/`wget` plus `tar`, for installation
+- `curl`/`wget` plus `tar`, for installation
 - The `codex` CLI for summary using the `codex` provider
 - The `opencode` CLI for summary using the `opencode` provider
 - The `claude` CLI for summary using the `claude` provider
@@ -31,13 +31,7 @@ Your Agents see only these three tools. When they want to use a tool from a MCP 
 
 ## Install
 
-Install the latest released build with Homebrew:
-
-```bash
-brew install cybershape/mcp-smart-proxy/msp
-```
-
-Or install the latest release for the current platform with the repository installer:
+Install the latest release for the current platform with the repository installer:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/cybershape/mcp-smart-proxy/master/install.sh | bash
@@ -45,7 +39,7 @@ curl -fsSL https://raw.githubusercontent.com/cybershape/mcp-smart-proxy/master/i
 
 The installer resolves the latest version through the GitHub Releases redirect path instead of the GitHub REST API, which avoids unauthenticated `api.github.com` rate limits.
 
-By default the installer writes `msp` to `/opt/homebrew/bin` when that directory exists and is writable, then falls back to `/usr/local/bin`, and finally to `~/.local/bin`.
+For non-root installs the installer writes `msp` to `~/.local/bin` by default so the running user can later replace that binary during background self-update. Root installs still default to `/usr/local/bin`.
 
 Install to a custom location instead:
 
@@ -64,6 +58,17 @@ After installation, run:
 ```bash
 msp
 ```
+
+## Background Self-Update
+
+When you run `msp mcp`, the long-running proxy process checks GitHub Releases in the background every 30 minutes.
+
+- If it finds a newer released build for the current platform, it downloads the matching archive and atomically replaces the current `msp` binary.
+- After a successful replacement, it writes a latest-version record next to the binary, for example `~/.local/bin/msp.latest-version.json`.
+- If a running `msp` process finds that its own version is older than that latest-version record, it automatically restarts itself into the updated binary.
+- Concurrent self-updates for the same installed binary are serialized with sibling `.lock` files so multiple `msp` processes do not race while replacing the executable or writing the version record.
+
+Background self-update requires that the running user can write to the installed `msp` path.
 
 ## Quick Start
 
@@ -535,11 +540,11 @@ That startup reload resolves the summary provider from the required `--provider`
 
 Only after that reload phase succeeds does the proxy start over stdio and load the refreshed cached toolsets. If any server fails to reload, the proxy does not report ready upstream.
 
-While `msp mcp` is running, it checks GitHub for a newer release every 30 minutes and stores the result in `~/.cache/mcp-smart-proxy/version-update.json`.
+While `msp mcp` is running, it checks GitHub for a newer release every 30 minutes.
 
-If a newer release exists, `msp mcp` writes or updates that file. If the current binary is already up to date, `msp mcp` deletes the file.
+If a newer release exists for the current platform, `msp mcp` downloads it, atomically replaces the current `msp` binary, and writes the installed-version record next to that binary.
 
-All other `msp` commands only read that cached record on startup. If the file says a newer version is available, they print a single warning line to stderr so normal stdout output and stdio MCP traffic stay untouched.
+The same background check also refreshes `~/.cache/mcp-smart-proxy/version-update.json`, which one-shot `msp` commands read on startup to print a warning when a newer release is available.
 
 ## Typical Workflow
 

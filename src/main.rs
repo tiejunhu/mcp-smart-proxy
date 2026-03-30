@@ -1,4 +1,5 @@
 use std::error::Error;
+use std::ffi::OsString;
 
 use chrono::{Local, TimeZone};
 use clap::Parser;
@@ -40,9 +41,11 @@ async fn main() {
 }
 
 async fn run() -> Result<(), Box<dyn Error>> {
+    let raw_args = std::env::args_os().collect::<Vec<OsString>>();
     let cli = Cli::parse();
     if matches!(&cli.command, Some(Command::Mcp { .. })) {
-        version_check::spawn_periodic_version_check_record_refresh();
+        version_check::prepare_executable_for_background_update(&raw_args);
+        version_check::spawn_periodic_self_update(raw_args.clone());
     } else {
         version_check::print_cached_update_notice();
     }
