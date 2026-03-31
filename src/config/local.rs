@@ -42,36 +42,113 @@ enum ServerTransportDraft {
     },
 }
 
+impl ServerRecordDraft {
+    fn from_add_command(raw_command: Vec<String>) -> Result<Self, Box<dyn Error>> {
+        if raw_command.len() == 1 && looks_like_url(&raw_command[0]) {
+            return Ok(Self::remote(
+                raw_command[0].clone(),
+                BTreeMap::new(),
+                true,
+                BTreeMap::new(),
+                Vec::new(),
+            ));
+        }
+
+        Ok(Self::stdio(
+            StdioServer::from_command(raw_command)?,
+            true,
+            BTreeMap::new(),
+            Vec::new(),
+        ))
+    }
+
+    fn from_importable(server: &ImportableServer) -> Result<Self, Box<dyn Error>> {
+        let draft = match &server.url {
+            Some(url) => Self::remote(
+                url.clone(),
+                server.headers.clone(),
+                server.enabled,
+                server.env.clone(),
+                server.env_vars.clone(),
+            ),
+            None => Self::stdio(
+                StdioServer::from_command(server.command.clone())?,
+                server.enabled,
+                server.env.clone(),
+                server.env_vars.clone(),
+            ),
+        };
+
+        Ok(draft)
+    }
+
+    fn stdio(
+        server: StdioServer,
+        enabled: bool,
+        env: BTreeMap<String, String>,
+        env_vars: Vec<String>,
+    ) -> Self {
+        Self {
+            transport: ServerTransportDraft::Stdio(server),
+            enabled,
+            env,
+            env_vars,
+        }
+    }
+
+    fn remote(
+        url: String,
+        headers: BTreeMap<String, String>,
+        enabled: bool,
+        env: BTreeMap<String, String>,
+        env_vars: Vec<String>,
+    ) -> Self {
+        Self {
+            transport: ServerTransportDraft::Remote { url, headers },
+            enabled,
+            env,
+            env_vars,
+        }
+    }
+
+    fn into_table(self) -> Table {
+        let ServerRecordDraft {
+            transport,
+            enabled,
+            env,
+            env_vars,
+        } = self;
+
+        let mut server_table = Table::new();
+        match transport {
+            ServerTransportDraft::Stdio(server) => {
+                server_table.insert("command".to_string(), Value::String(server.command));
+                upsert_string_array(&mut server_table, "args", server.args);
+            }
+            ServerTransportDraft::Remote { url, headers } => {
+                server_table.insert("url".to_string(), Value::String(url));
+                upsert_string_table(&mut server_table, "headers", headers);
+            }
+        }
+        if !enabled {
+            server_table.insert("enabled".to_string(), Value::Boolean(false));
+        }
+        upsert_string_table(&mut server_table, "env", env);
+        upsert_string_array(&mut server_table, "env_vars", env_vars);
+
+        server_table
+    }
+}
+
 pub fn add_server(
     config_path: &Path,
     name: &str,
     raw_command: Vec<String>,
 ) -> Result<String, Box<dyn Error>> {
-    if raw_command.len() == 1 && looks_like_url(&raw_command[0]) {
-        return save_server(
-            config_path,
-            name,
-            ServerRecordDraft {
-                transport: ServerTransportDraft::Remote {
-                    url: raw_command[0].clone(),
-                    headers: BTreeMap::new(),
-                },
-                enabled: true,
-                env: BTreeMap::new(),
-                env_vars: Vec::new(),
-            },
-        );
-    }
-
     save_server(
         config_path,
         name,
-        ServerRecordDraft {
-            transport: ServerTransportDraft::Stdio(StdioServer::from_command(raw_command)?),
-            enabled: true,
-            env: BTreeMap::new(),
-            env_vars: Vec::new(),
-        },
+        ServerRecordDraft::from_add_command(raw_command)?,
     )
 }
 
@@ -79,33 +156,10 @@ pub fn import_server(
     config_path: &Path,
     server: &ImportableServer,
 ) -> Result<String, Box<dyn Error>> {
-    if let Some(url) = &server.url {
-        return save_server(
-            config_path,
-            &server.name,
-            ServerRecordDraft {
-                transport: ServerTransportDraft::Remote {
-                    url: url.clone(),
-                    headers: server.headers.clone(),
-                },
-                enabled: server.enabled,
-                env: server.env.clone(),
-                env_vars: server.env_vars.clone(),
-            },
-        );
-    }
-
     save_server(
         config_path,
         &server.name,
-        ServerRecordDraft {
-            transport: ServerTransportDraft::Stdio(StdioServer::from_command(
-                server.command.clone(),
-            )?),
-            enabled: server.enabled,
-            env: server.env.clone(),
-            env_vars: server.env_vars.clone(),
-        },
+        ServerRecordDraft::from_importable(server)?,
     )
 }
 
@@ -139,10 +193,7 @@ pub fn list_servers(config_path: &Path) -> Result<Vec<super::ListedServer>, Box<
                 .as_table()
                 .ok_or_else(|| format!("server `{name}` must be a table"))?;
             let parsed = parse_server_entry(server, &name)?;
-            let (command, args) = match parsed.transport {
-                ParsedServerTransport::Stdio { command, args } => (command, args),
-                ParsedServerTransport::Remote { url, .. } => (url, Vec::new()),
-            };
+            let (command, args) = listed_server_command(parsed.transport);
             let last_updated_at = read_cached_tools_timestamp(&name);
 
             Ok(super::ListedServer {
@@ -215,17 +266,7 @@ pub fn set_server_enabled(
     enabled: bool,
 ) -> Result<SetServerEnabledResult, Box<dyn Error>> {
     let mut config = load_config_table(config_path)?;
-    let servers = config
-        .get_mut("servers")
-        .and_then(Value::as_table_mut)
-        .ok_or_else(|| "no `servers` table found in config".to_string())?;
-
-    let resolved_name = resolve_server_name(servers, requested_name)
-        .ok_or_else(|| format!("server `{requested_name}` not found"))?;
-    let server = servers
-        .get_mut(&resolved_name)
-        .and_then(Value::as_table_mut)
-        .ok_or_else(|| format!("server `{resolved_name}` must be a table"))?;
+    let (resolved_name, server) = resolved_server_table_mut(&mut config, requested_name)?;
 
     server.insert("enabled".to_string(), Value::Boolean(enabled));
     save_config_table(config_path, &config)?;
@@ -256,39 +297,13 @@ pub fn configured_server(
     config: &Table,
     requested_name: &str,
 ) -> Result<(String, ConfiguredServer), Box<dyn Error>> {
-    let servers = config
-        .get("servers")
-        .and_then(Value::as_table)
-        .ok_or_else(|| "no `servers` table found in config".to_string())?;
-
-    let resolved_name = if servers.contains_key(requested_name) {
-        requested_name.to_string()
-    } else {
-        let normalized = sanitize_name(requested_name);
-        if servers.contains_key(&normalized) {
-            normalized
-        } else {
-            return Err(format!("server `{requested_name}` not found").into());
-        }
-    };
-
-    let server = servers[&resolved_name]
-        .as_table()
-        .ok_or_else(|| format!("server `{resolved_name}` must be a table"))?;
+    let (resolved_name, server) = resolved_server_table(config, requested_name)?;
     let parsed = parse_server_entry(server, &resolved_name)?;
-    let configured_transport = match parsed.transport {
-        ParsedServerTransport::Stdio { command, args } => {
-            ConfiguredTransport::Stdio { command, args }
-        }
-        ParsedServerTransport::Remote { url, headers } => {
-            ConfiguredTransport::Remote { url, headers }
-        }
-    };
 
     Ok((
         resolved_name,
         ConfiguredServer {
-            transport: configured_transport,
+            transport: configured_transport(parsed.transport),
             env: parsed.env,
             env_vars: parsed.env_vars,
         },
@@ -333,7 +348,7 @@ fn insert_server(
     server: ServerRecordDraft,
 ) -> Result<(), Box<dyn Error>> {
     let servers = servers_table_mut(config)?;
-    servers.insert(name.to_string(), Value::Table(build_server_table(server)));
+    servers.insert(name.to_string(), Value::Table(server.into_table()));
     Ok(())
 }
 
@@ -368,32 +383,22 @@ fn servers_table_mut(config: &mut Table) -> Result<&mut Table, Box<dyn Error>> {
         .ok_or_else(|| "`servers` in config must be a table".to_string().into())
 }
 
-fn build_server_table(server: ServerRecordDraft) -> Table {
-    let ServerRecordDraft {
-        transport,
-        enabled,
-        env,
-        env_vars,
-    } = server;
-
-    let mut server_table = Table::new();
+fn listed_server_command(transport: ParsedServerTransport) -> (String, Vec<String>) {
     match transport {
-        ServerTransportDraft::Stdio(server) => {
-            server_table.insert("command".to_string(), Value::String(server.command));
-            upsert_string_array(&mut server_table, "args", server.args);
-        }
-        ServerTransportDraft::Remote { url, headers } => {
-            server_table.insert("url".to_string(), Value::String(url));
-            upsert_string_table(&mut server_table, "headers", headers);
-        }
+        ParsedServerTransport::Stdio { command, args } => (command, args),
+        ParsedServerTransport::Remote { url, .. } => (url, Vec::new()),
     }
-    if !enabled {
-        server_table.insert("enabled".to_string(), Value::Boolean(false));
-    }
-    upsert_string_table(&mut server_table, "env", env);
-    upsert_string_array(&mut server_table, "env_vars", env_vars);
+}
 
-    server_table
+fn configured_transport(transport: ParsedServerTransport) -> ConfiguredTransport {
+    match transport {
+        ParsedServerTransport::Stdio { command, args } => {
+            ConfiguredTransport::Stdio { command, args }
+        }
+        ParsedServerTransport::Remote { url, headers } => {
+            ConfiguredTransport::Remote { url, headers }
+        }
+    }
 }
 
 pub(crate) fn parse_toml_string_table(

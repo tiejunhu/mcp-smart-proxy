@@ -6,19 +6,18 @@ use toml::{Table, Value};
 
 use crate::paths::format_path_for_display;
 
-use super::super::local::{
-    load_config_table, merge_env_vars, parse_toml_string_array, parse_toml_string_table,
-    save_config_table,
-};
+use super::super::local::{merge_env_vars, parse_toml_string_array, parse_toml_string_table};
 use super::super::provider::codex_config_path;
 use super::super::self_server::{codex_server_raw_command, inspect_codex_self_server};
 use super::super::{
     ImportPlan, ImportedServerDefinition, InstallMcpServerResult, ReplaceMcpServersResult,
     RestoreMcpServersResult, StdioServer,
 };
-use super::{
-    TomlImportAdapter, TomlRestoreAdapter, collect_remote_header_env_vars, install_toml_mcp_server,
-    load_provider_import_plan, load_toml_import_plan_from_path, replace_toml_mcp_servers_from_path,
+use super::common::{collect_remote_header_env_vars, load_provider_import_plan};
+use super::toml_support::{
+    TomlImportAdapter, TomlRestoreAdapter, install_toml_mcp_server, load_required_toml_config,
+    load_toml_import_plan_from_path, merge_toml_servers_into_config, merge_toml_servers_into_file,
+    remove_toml_self_servers, replace_toml_mcp_servers_from_path,
     restore_toml_mcp_servers_from_path,
 };
 
@@ -225,20 +224,12 @@ fn merge_codex_servers_into_backup(
     backup_path: &Path,
     servers: &Table,
 ) -> Result<(), Box<dyn Error>> {
-    let mut backup = load_config_table(backup_path)?;
-    let backup_servers_value = backup
-        .entry("mcp_servers")
-        .or_insert_with(|| Value::Table(Table::new()));
-    let backup_servers = backup_servers_value
-        .as_table_mut()
-        .ok_or_else(|| "`mcp_servers` in Codex backup must be a table".to_string())?;
-
-    for (name, server) in servers {
-        backup_servers.insert(name.clone(), server.clone());
-    }
-
-    save_config_table(backup_path, &backup)?;
-    Ok(())
+    merge_toml_servers_into_file(
+        backup_path,
+        "mcp_servers",
+        "`mcp_servers` in Codex backup must be a table",
+        servers,
+    )
 }
 
 fn codex_backup_servers(servers: &Table) -> Table {
@@ -258,58 +249,25 @@ fn merge_codex_servers_into_target(
     config: &mut Table,
     servers: &Table,
 ) -> Result<(), Box<dyn Error>> {
-    let target_servers_value = config
-        .entry("mcp_servers")
-        .or_insert_with(|| Value::Table(Table::new()));
-    let target_servers = target_servers_value
-        .as_table_mut()
-        .ok_or_else(|| "`mcp_servers` in Codex config must be a table".to_string())?;
-
-    for (name, server) in servers {
-        target_servers.insert(name.clone(), server.clone());
-    }
-
-    Ok(())
+    merge_toml_servers_into_config(
+        config,
+        "mcp_servers",
+        "`mcp_servers` in Codex config must be a table",
+        servers,
+    )
 }
 
 fn load_required_codex_backup(path: &Path) -> Result<Table, Box<dyn Error>> {
-    if !path.exists() {
-        return Err(format!(
-            "Codex backup not found at {}",
-            format_path_for_display(path)
-        )
-        .into());
-    }
-
-    load_config_table(path)
+    load_required_toml_config(path, "Codex backup")
 }
 
 fn remove_codex_self_servers(config: &mut Table) -> Result<usize, Box<dyn Error>> {
-    let Some(servers_value) = config.get_mut("mcp_servers") else {
-        return Ok(0);
-    };
-    let servers = servers_value
-        .as_table_mut()
-        .ok_or_else(|| "`mcp_servers` in Codex config must be a table".to_string())?;
-
-    let names = servers
-        .iter()
-        .filter_map(|(name, value)| {
-            let server = value.as_table()?;
-            let raw_command = codex_server_raw_command(server)?;
-            super::super::is_self_server_command(&raw_command).then_some(name.clone())
-        })
-        .collect::<Vec<_>>();
-
-    for name in &names {
-        servers.remove(name);
-    }
-
-    if servers.is_empty() {
-        config.remove("mcp_servers");
-    }
-
-    Ok(names.len())
+    remove_toml_self_servers(
+        config,
+        "mcp_servers",
+        "`mcp_servers` in Codex config must be a table",
+        codex_server_raw_command,
+    )
 }
 
 fn validate_importable_codex_server(name: &str, server: &Table) -> Result<(), Box<dyn Error>> {

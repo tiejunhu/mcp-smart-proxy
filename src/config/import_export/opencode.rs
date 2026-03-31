@@ -1,11 +1,9 @@
 use std::collections::BTreeMap;
 use std::error::Error;
-use std::fs;
 use std::path::Path;
 
 use serde_json::{Map as JsonMap, Value as JsonValue};
 
-use crate::fs_util::write_file_atomically;
 use crate::paths::format_path_for_display;
 
 use super::super::local::parse_json_string_object;
@@ -15,11 +13,13 @@ use super::super::{
     ImportPlan, ImportedServerDefinition, InstallMcpServerResult, ReplaceMcpServersResult,
     RestoreMcpServersResult, StdioServer,
 };
-use super::{
+use super::common::{collect_remote_header_env_vars, load_provider_import_plan};
+use super::json_support::{
     JsonImportAdapter, JsonInstallAdapter, JsonReplaceAdapter, JsonRestoreAdapter,
-    collect_remote_header_env_vars, install_json_mcp_server, load_json_import_plan_from_path,
-    load_provider_import_plan, replace_json_mcp_servers_from_path,
-    restore_json_mcp_servers_from_path,
+    install_json_mcp_server, load_json_import_plan_from_path, load_json_object_config,
+    load_required_json_object_config, merge_json_servers_into_config, merge_json_servers_into_file,
+    remove_json_self_servers, replace_json_mcp_servers_from_path,
+    restore_json_mcp_servers_from_path, save_json_object_config,
 };
 
 pub fn load_opencode_servers_for_import() -> Result<(std::path::PathBuf, ImportPlan), Box<dyn Error>>
@@ -225,42 +225,26 @@ fn opencode_server_value(server: &StdioServer) -> JsonValue {
 }
 
 pub(crate) fn load_opencode_config(path: &Path) -> Result<JsonValue, Box<dyn Error>> {
-    if !path.exists() {
-        return Ok(JsonValue::Object(JsonMap::new()));
-    }
-
-    let contents = fs::read_to_string(path)?;
-    let value = serde_json::from_str(&contents)?;
-    Ok(value)
+    load_json_object_config(path)
 }
 
 fn save_opencode_config(path: &Path, config: &JsonValue) -> Result<(), Box<dyn Error>> {
-    let contents = serde_json::to_string_pretty(config)?;
-    write_file_atomically(path, contents.as_bytes())?;
-    Ok(())
+    save_json_object_config(path, config)
 }
 
 fn merge_opencode_servers_into_backup(
     backup_path: &Path,
     servers: &JsonMap<String, JsonValue>,
 ) -> Result<(), Box<dyn Error>> {
-    let mut backup = load_opencode_config(backup_path)?;
-    let root = backup
-        .as_object_mut()
-        .ok_or_else(|| "OpenCode backup root must be a JSON object".to_string())?;
-    let backup_servers_value = root
-        .entry("mcp".to_string())
-        .or_insert_with(|| JsonValue::Object(JsonMap::new()));
-    let backup_servers = backup_servers_value
-        .as_object_mut()
-        .ok_or_else(|| "`mcp` in OpenCode backup must be an object".to_string())?;
-
-    for (name, server) in servers {
-        backup_servers.insert(name.clone(), server.clone());
-    }
-
-    save_opencode_config(backup_path, &backup)?;
-    Ok(())
+    merge_json_servers_into_file(
+        backup_path,
+        load_opencode_config,
+        save_opencode_config,
+        "OpenCode backup root must be a JSON object",
+        "mcp",
+        "`mcp` in OpenCode backup must be an object",
+        servers,
+    )
 }
 
 fn opencode_backup_servers(servers: &JsonMap<String, JsonValue>) -> JsonMap<String, JsonValue> {
@@ -280,64 +264,27 @@ fn merge_opencode_servers_into_target(
     config: &mut JsonValue,
     servers: &JsonMap<String, JsonValue>,
 ) -> Result<(), Box<dyn Error>> {
-    let root = config
-        .as_object_mut()
-        .ok_or_else(|| "OpenCode config root must be a JSON object".to_string())?;
-    let target_servers_value = root
-        .entry("mcp".to_string())
-        .or_insert_with(|| JsonValue::Object(JsonMap::new()));
-    let target_servers = target_servers_value
-        .as_object_mut()
-        .ok_or_else(|| "`mcp` in OpenCode config must be an object".to_string())?;
-
-    for (name, server) in servers {
-        target_servers.insert(name.clone(), server.clone());
-    }
-
-    Ok(())
+    merge_json_servers_into_config(
+        config,
+        "OpenCode config root must be a JSON object",
+        "mcp",
+        "`mcp` in OpenCode config must be an object",
+        servers,
+    )
 }
 
 fn load_required_opencode_backup(path: &Path) -> Result<JsonValue, Box<dyn Error>> {
-    if !path.exists() {
-        return Err(format!(
-            "OpenCode backup not found at {}",
-            format_path_for_display(path)
-        )
-        .into());
-    }
-
-    load_opencode_config(path)
+    load_required_json_object_config(path, "OpenCode backup")
 }
 
 fn remove_opencode_self_servers(config: &mut JsonValue) -> Result<usize, Box<dyn Error>> {
-    let root = config
-        .as_object_mut()
-        .ok_or_else(|| "OpenCode config root must be a JSON object".to_string())?;
-    let Some(servers_value) = root.get_mut("mcp") else {
-        return Ok(0);
-    };
-    let servers = servers_value
-        .as_object_mut()
-        .ok_or_else(|| "`mcp` in OpenCode config must be an object".to_string())?;
-
-    let names = servers
-        .iter()
-        .filter_map(|(name, value)| {
-            let server = value.as_object()?;
-            let raw_command = opencode_server_raw_command(server)?;
-            super::super::is_self_server_command(&raw_command).then_some(name.clone())
-        })
-        .collect::<Vec<_>>();
-
-    for name in &names {
-        servers.remove(name);
-    }
-
-    if servers.is_empty() {
-        root.remove("mcp");
-    }
-
-    Ok(names.len())
+    remove_json_self_servers(
+        config,
+        "OpenCode config root must be a JSON object",
+        "mcp",
+        "`mcp` in OpenCode config must be an object",
+        opencode_server_raw_command,
+    )
 }
 
 fn validate_importable_opencode_server(
