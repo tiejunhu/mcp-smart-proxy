@@ -1,7 +1,10 @@
 use std::env;
 use std::error::Error;
+use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
+
+const MAX_UNIX_SOCKET_PATH_LEN: usize = 103;
 
 pub fn expand_tilde(path: &Path) -> Result<PathBuf, Box<dyn Error>> {
     let path_str = path.to_string_lossy();
@@ -67,9 +70,9 @@ pub fn daemon_socket_path_from_home(
     config_path: &Path,
 ) -> Result<PathBuf, Box<dyn Error>> {
     let scope = daemon_scope_component(config_path);
-    Ok(cache_dir_path_from_home(home)?
-        .join("daemon")
-        .join(format!("daemon-{scope}.sock")))
+    let path = cache_dir_path_from_home(home).map(|path| path.join(format!("msp-{scope}.sock")))?;
+    validate_unix_socket_path(&path)?;
+    Ok(path)
 }
 
 pub fn version_check_record_path() -> Result<PathBuf, Box<dyn Error>> {
@@ -128,13 +131,20 @@ pub fn sanitize_name(value: &str) -> String {
 
 pub fn daemon_scope_component(config_path: &Path) -> String {
     let normalized = config_path.to_string_lossy().to_string();
-    let sanitized = sanitize_name(&normalized);
-    let readable = if sanitized.is_empty() {
-        "config".to_string()
-    } else {
-        sanitized.chars().take(48).collect::<String>()
-    };
-    format!("{readable}-{:016x}", fnv1a64(normalized.as_bytes()))
+    format!("{:016x}", fnv1a64(normalized.as_bytes()))
+}
+
+pub fn validate_unix_socket_path(path: &Path) -> Result<(), Box<dyn Error>> {
+    let length = path.as_os_str().as_bytes().len();
+    if length > MAX_UNIX_SOCKET_PATH_LEN {
+        return Err(format!(
+            "unix socket path is too long ({length} bytes, max {MAX_UNIX_SOCKET_PATH_LEN}): {}",
+            path.display()
+        )
+        .into());
+    }
+
+    Ok(())
 }
 
 pub fn unix_epoch_ms() -> Result<u128, Box<dyn Error>> {
@@ -218,11 +228,32 @@ mod tests {
 
         let path = daemon_socket_path_from_home(&home, config_path).unwrap();
 
-        assert!(path.starts_with(home.join(".cache/mcp-smart-proxy/daemon")));
+        assert_eq!(path.parent(), Some(home.join(".cache/mcp-smart-proxy").as_path()));
+        assert_eq!(
+            path.file_name().and_then(|value| value.to_str()),
+            Some("msp-b032d3b59a0440c2.sock")
+        );
         assert_eq!(
             path.extension().and_then(|value| value.to_str()),
             Some("sock")
         );
+    }
+
+    #[test]
+    fn daemon_scope_component_is_compact_hash() {
+        let scope = daemon_scope_component(Path::new("/tmp/demo-config.toml"));
+
+        assert_eq!(scope, "b032d3b59a0440c2");
+    }
+
+    #[test]
+    fn rejects_unix_socket_paths_that_exceed_platform_limit() {
+        let long_name = "a".repeat(MAX_UNIX_SOCKET_PATH_LEN + 1);
+        let path = PathBuf::from(format!("/tmp/{long_name}"));
+
+        let error = validate_unix_socket_path(&path).unwrap_err();
+
+        assert!(error.to_string().contains("unix socket path is too long"));
     }
 
     #[test]

@@ -29,6 +29,8 @@ Agents first inspect the cached server index, optionally inspect one tool defini
 
 When a host starts `msp mcp --provider <provider>`, `msp` auto-starts one background daemon for that config file. That daemon owns downstream MCP communication and periodic self-update checks. Later `msp mcp` processes that use the same config reuse the same Unix socket daemon, even when they pass different `--provider` values. The daemon exits after 1 hour with no requests.
 
+The default daemon socket lives under `~/.cache/mcp-smart-proxy/` and uses a short hash of the config path so it stays within Unix socket path limits on macOS and Linux.
+
 ## Requirements
 
 - `curl` or `wget`, plus `tar`, for installation
@@ -286,6 +288,8 @@ msp daemon restart
 
 All three commands also accept `--socket <path>` when you need to target a custom daemon socket.
 
+Keep custom socket paths short enough for Unix domain socket limits.
+
 ## Install Into a Host
 
 Install the proxy into Codex, OpenCode, or Claude Code:
@@ -358,6 +362,8 @@ Default config path:
 ```
 
 Override it with `--config <PATH>`.
+
+The default daemon socket path is derived from this config path with a short stable hash, so different config files still get distinct daemons without exceeding Unix socket length limits.
 
 Example:
 

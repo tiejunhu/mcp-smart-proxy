@@ -15,7 +15,7 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader as AsyncBufReader};
 use tokio::net::UnixStream;
 use tokio::time::sleep;
 
-use crate::paths::daemon_socket_path;
+use crate::paths::{daemon_socket_path, validate_unix_socket_path};
 use crate::types::{CachedToolsetRecord, DaemonRequest, DaemonResponse, DaemonStatus};
 
 const DAEMON_READY_RETRIES: usize = 100;
@@ -158,10 +158,12 @@ pub fn resolve_socket_path(
     config_path: &Path,
     socket_override: Option<&Path>,
 ) -> Result<PathBuf, Box<dyn Error>> {
-    match socket_override {
+    let path = match socket_override {
         Some(path) => Ok(path.to_path_buf()),
         None => daemon_socket_path(config_path),
-    }
+    }?;
+    validate_unix_socket_path(&path)?;
+    Ok(path)
 }
 
 async fn probe_status(
@@ -511,5 +513,16 @@ mod tests {
         .unwrap();
 
         assert_eq!(socket_path, PathBuf::from("/tmp/custom.sock"));
+    }
+
+    #[test]
+    fn socket_override_is_rejected_when_too_long() {
+        let long_name = "a".repeat(120);
+        let socket_path = PathBuf::from(format!("/tmp/{long_name}.sock"));
+
+        let error =
+            resolve_socket_path(Path::new("/tmp/config.toml"), Some(&socket_path)).unwrap_err();
+
+        assert!(error.to_string().contains("unix socket path is too long"));
     }
 }
