@@ -1,4 +1,5 @@
 use std::future::Future;
+use std::path::PathBuf;
 
 use rmcp::{
     ErrorData as McpError, ServerHandler,
@@ -6,14 +7,13 @@ use rmcp::{
         CallToolRequestMethod, CallToolRequestParams, CallToolResult, ListToolsResult,
         PaginatedRequestParams, ServerCapabilities, ServerInfo,
     },
-    service::{RequestContext, ServiceError},
+    service::RequestContext,
 };
 use serde_json::{Map as JsonMap, Value as JsonValue};
 
-use crate::console::print_external_command_failure_with_captured_stderr;
+use crate::daemon;
+use crate::types::CachedToolsetRecord;
 
-use super::cache::CachedToolsetRecord;
-use super::client::ClientRegistry;
 use super::tools::{
     ACTIVATE_EXTERNAL_MCP_NAME, ACTIVATE_EXTERNAL_MCP_TOOL_NAME, ActivateExternalMcpRequest,
     ActivateExternalMcpToolRequest, CALL_TOOL_IN_EXTERNAL_MCP_NAME, CallToolInExternalMcpRequest,
@@ -23,19 +23,18 @@ use super::tools::{
 };
 
 pub(super) struct SmartProxyMcpServer {
+    config_path: PathBuf,
     tools: ToolCatalog,
     toolsets: Vec<CachedToolsetRecord>,
-    clients: ClientRegistry,
 }
 
 impl SmartProxyMcpServer {
-    pub(super) fn new(toolsets: Vec<CachedToolsetRecord>) -> Self {
+    pub(super) fn new(config_path: PathBuf, toolsets: Vec<CachedToolsetRecord>) -> Self {
         let tools = ToolCatalog::new(&toolsets);
-        let clients = ClientRegistry::new(&toolsets);
         Self {
+            config_path,
             tools,
             toolsets,
-            clients,
         }
     }
 
@@ -79,38 +78,15 @@ impl SmartProxyMcpServer {
         tool_name: String,
         arguments: Option<JsonMap<String, JsonValue>>,
     ) -> Result<CallToolResult, McpError> {
-        let client = self.clients.get_or_connect(toolset).await?;
-        let stderr_capture = client.stderr.start_capture().await;
-        let request = match arguments {
-            Some(arguments) => CallToolRequestParams::new(tool_name).with_arguments(arguments),
-            None => CallToolRequestParams::new(tool_name),
-        };
-
-        match client.service.call_tool(request).await {
-            Ok(result) => {
-                let _ = stderr_capture.finish().await;
-                Ok(result)
-            }
-            Err(error) => {
-                let stderr_content = stderr_capture.finish().await;
-                print_external_command_failure_with_captured_stderr(
-                    "mcp.call_tool_in_external_mcp",
-                    &client.label,
-                    &client.command_line,
-                    "tool-call-failed",
-                    &stderr_content,
-                )
-                .await;
-                Err(map_service_error(error))
-            }
-        }
-    }
-}
-
-fn map_service_error(error: ServiceError) -> McpError {
-    match error {
-        ServiceError::McpError(error) => error,
-        other => McpError::internal_error(other.to_string(), None),
+        daemon::call_tool(
+            &self.config_path,
+            None,
+            &toolset.name,
+            &tool_name,
+            arguments,
+        )
+        .await
+        .map_err(|error| McpError::internal_error(error.to_string(), None))
     }
 }
 

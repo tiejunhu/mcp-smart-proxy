@@ -104,6 +104,20 @@ pub enum Command {
         #[arg(long, value_enum)]
         provider: Option<ProviderName>,
     },
+    #[command(hide = true)]
+    Daemon {
+        #[arg(long, value_name = "PATH")]
+        socket: Option<PathBuf>,
+        #[command(subcommand)]
+        command: DaemonCommand,
+    },
+}
+
+#[derive(Debug, Clone, Subcommand)]
+pub enum DaemonCommand {
+    Run,
+    Status,
+    Exit,
 }
 
 #[derive(Debug, Clone, ValueEnum)]
@@ -339,6 +353,32 @@ mod tests {
                 assert!(matches!(provider, Some(ProviderName::Codex)));
             }
             other => panic!("expected mcp command, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_hidden_daemon_run_subcommand() {
+        let cli = Cli::parse_from(["msp", "daemon", "run"]);
+
+        match cli.command {
+            Some(Command::Daemon { socket, command }) => {
+                assert!(socket.is_none());
+                assert!(matches!(command, DaemonCommand::Run));
+            }
+            other => panic!("expected daemon command, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_hidden_daemon_socket_override() {
+        let cli = Cli::parse_from(["msp", "daemon", "--socket", "/tmp/msp.sock", "status"]);
+
+        match cli.command {
+            Some(Command::Daemon { socket, command }) => {
+                assert_eq!(socket, Some(PathBuf::from("/tmp/msp.sock")));
+                assert!(matches!(command, DaemonCommand::Status));
+            }
+            other => panic!("expected daemon command, got {other:?}"),
         }
     }
 

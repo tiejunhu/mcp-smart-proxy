@@ -23,6 +23,7 @@
 - Keep shared import/export workflow helpers split by responsibility: provider-specific parsing stays in `src/config/import_export/<provider>.rs`, while format-specific file operations live in shared helpers under `src/config/import_export/`.
 - Keep CLI orchestration thin: `src/commands.rs` should focus on top-level dispatch, while grouped command workflows such as import/install or remote auth should live in `src/commands/*.rs`.
 - Keep `add` side-effect free beyond config persistence: adding a server should only write config, while provider-dependent cache refresh belongs to `reload` and `mcp` startup.
+- Keep `msp mcp` on a daemon/client split: the foreground `msp mcp` process should stay a thin stdio MCP facade, while the shared daemon owns downstream MCP communication, socket lifecycle, idle shutdown, and background self-update work.
 - Keep self-update logic split by concern: version comparison, state-file persistence, binary installation, and runtime orchestration should not live in a single Rust module.
 - Keep local config record construction centralized: adding or importing a server should go through shared draft builders instead of duplicating transport-to-table conversion logic.
 - Keep MCP proxy logic split between cache loading, tool-schema helpers, downstream client lifecycle, and request dispatch so `src/mcp_server/` remains easy to extend without re-reading one large file.

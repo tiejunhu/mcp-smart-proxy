@@ -6,9 +6,9 @@ use serde_json::{Value as JsonValue, json};
 use toml::Table;
 
 use crate::paths::cache_file_path_from_home;
-use crate::types::{CachedTools, ConfiguredServer, ConfiguredTransport, ToolSnapshot};
+use crate::types::{CachedTools, CachedToolsetRecord, ToolSnapshot};
 
-use super::cache::{CachedToolsetRecord, load_cached_toolsets_from_home};
+use super::cache::load_cached_toolsets_from_home;
 use super::tools::{
     CALL_TOOL_IN_EXTERNAL_MCP_NAME, STDIO_HOST_REQUIRED_MESSAGE, build_activate_tool_description,
     build_activate_tool_detail_result, build_activate_tool_result,
@@ -66,10 +66,6 @@ fn loads_only_toolsets_with_cache_files() {
     assert_eq!(toolsets.len(), 1);
     assert_eq!(toolsets[0].name, "alpha");
     assert_eq!(toolsets[0].summary, "Use Alpha.");
-    assert_eq!(
-        toolsets[0].server.stdio_transport(),
-        Some(("uvx", ["alpha-server".to_string()].as_slice()))
-    );
 }
 
 #[test]
@@ -293,13 +289,6 @@ fn cached_stdio_toolset(
     CachedToolsetRecord {
         name: name.to_string(),
         summary: summary.to_string(),
-        server: ConfiguredServer {
-            transport: ConfiguredTransport::Stdio {
-                command: "uvx".to_string(),
-                args: vec![name.to_string()],
-            },
-            ..Default::default()
-        },
         tools,
     }
 }

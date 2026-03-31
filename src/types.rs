@@ -2,8 +2,8 @@ use std::collections::BTreeMap;
 use std::env;
 use std::ffi::OsString;
 
-use rmcp::model::Tool;
-use serde::Serialize;
+use rmcp::model::{CallToolResult, Tool};
+use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -98,7 +98,17 @@ pub enum ModelProviderConfig {
     Claude(ClaudeRuntimeConfig),
 }
 
-#[derive(Debug, Clone, Serialize, serde::Deserialize)]
+impl ModelProviderConfig {
+    pub fn provider_name(&self) -> &'static str {
+        match self {
+            Self::Codex(_) => "codex",
+            Self::Opencode(_) => "opencode",
+            Self::Claude(_) => "claude",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CachedTools {
     pub server: String,
     pub summary: String,
@@ -106,7 +116,7 @@ pub struct CachedTools {
     pub tools: Vec<ToolSnapshot>,
 }
 
-#[derive(Debug, Clone, Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolSnapshot {
     pub name: String,
     pub title: Option<String>,
@@ -138,6 +148,46 @@ pub fn tool_snapshot(tool: &Tool) -> ToolSnapshot {
 
 fn json_value_or_null<T: Serialize>(value: &T) -> JsonValue {
     serde_json::to_value(value).unwrap_or(JsonValue::Null)
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CachedToolsetRecord {
+    pub name: String,
+    pub summary: String,
+    pub tools: Vec<ToolSnapshot>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DaemonStatus {
+    pub version: String,
+    pub pid: u32,
+    pub socket_path: String,
+    pub config_path: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum DaemonRequest {
+    Status,
+    Exit,
+    LoadToolsets {
+        provider: String,
+    },
+    CallTool {
+        toolset_name: String,
+        tool_name: String,
+        arguments: Option<serde_json::Map<String, JsonValue>>,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum DaemonResponse {
+    Status { status: DaemonStatus },
+    ExitAck,
+    Toolsets { toolsets: Vec<CachedToolsetRecord> },
+    ToolResult { result: CallToolResult },
+    Error { message: String },
 }
 
 #[cfg(test)]

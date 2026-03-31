@@ -58,6 +58,20 @@ pub fn cache_file_path_from_home(
     Ok(cache_dir_path_from_home(home)?.join(format!("{server_name}.json")))
 }
 
+pub fn daemon_socket_path(config_path: &Path) -> Result<PathBuf, Box<dyn Error>> {
+    daemon_socket_path_from_home(&home_dir()?, config_path)
+}
+
+pub fn daemon_socket_path_from_home(
+    home: &Path,
+    config_path: &Path,
+) -> Result<PathBuf, Box<dyn Error>> {
+    let scope = daemon_scope_component(config_path);
+    Ok(cache_dir_path_from_home(home)?
+        .join("daemon")
+        .join(format!("daemon-{scope}.sock")))
+}
+
 pub fn version_check_record_path() -> Result<PathBuf, Box<dyn Error>> {
     version_check_record_path_from_home(&home_dir()?)
 }
@@ -112,8 +126,28 @@ pub fn sanitize_name(value: &str) -> String {
     result.trim_matches('-').to_string()
 }
 
+pub fn daemon_scope_component(config_path: &Path) -> String {
+    let normalized = config_path.to_string_lossy().to_string();
+    let sanitized = sanitize_name(&normalized);
+    let readable = if sanitized.is_empty() {
+        "config".to_string()
+    } else {
+        sanitized.chars().take(48).collect::<String>()
+    };
+    format!("{readable}-{:016x}", fnv1a64(normalized.as_bytes()))
+}
+
 pub fn unix_epoch_ms() -> Result<u128, Box<dyn Error>> {
     Ok(SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis())
+}
+
+fn fnv1a64(bytes: &[u8]) -> u64 {
+    let mut hash = 0xcbf29ce484222325_u64;
+    for byte in bytes {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    hash
 }
 
 fn format_path_for_display_from_home(home: &Path, path: &Path) -> String {
@@ -175,6 +209,20 @@ mod tests {
         let path = oauth_credentials_path_from_home(&home, "demo").unwrap();
 
         assert_eq!(path, home.join(".cache/mcp-smart-proxy/oauth/demo.json"));
+    }
+
+    #[test]
+    fn builds_daemon_socket_path_from_config_scope() {
+        let home = PathBuf::from("/tmp/example-home");
+        let config_path = Path::new("/tmp/demo-config.toml");
+
+        let path = daemon_socket_path_from_home(&home, config_path).unwrap();
+
+        assert!(path.starts_with(home.join(".cache/mcp-smart-proxy/daemon")));
+        assert_eq!(
+            path.extension().and_then(|value| value.to_str()),
+            Some("sock")
+        );
     }
 
     #[test]

@@ -6,9 +6,7 @@ use serde::{Deserialize, de::DeserializeOwned};
 use serde_json::{Map as JsonMap, Value as JsonValue, json};
 
 use crate::paths::sanitize_name;
-use crate::types::ToolSnapshot;
-
-use super::cache::CachedToolsetRecord;
+use crate::types::{CachedToolsetRecord, ToolSnapshot};
 
 pub(super) const ACTIVATE_EXTERNAL_MCP_NAME: &str = "activate_external_mcp";
 pub(super) const ACTIVATE_EXTERNAL_MCP_TOOL_NAME: &str = "activate_external_mcp_tool";

@@ -4,6 +4,7 @@ mod cli;
 mod commands;
 mod config;
 mod console;
+mod daemon;
 mod downstream_client;
 mod env_template;
 mod fs_util;

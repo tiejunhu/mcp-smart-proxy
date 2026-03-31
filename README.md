@@ -26,6 +26,8 @@ The installed binary name is `msp`. Running `msp` without arguments shows the to
 
 Agents first inspect the cached server index, optionally inspect one tool definition, and then call the downstream tool through the proxy.
 
+When a host starts `msp mcp --provider <provider>`, `msp` auto-starts one background daemon for that config file. That daemon owns downstream MCP communication and periodic self-update checks. Later `msp mcp` processes that use the same config reuse the same Unix socket daemon, even when they pass different `--provider` values. The daemon exits after 1 hour with no requests.
+
 ## Requirements
 
 - `curl` or `wget`, plus `tar`, for installation
@@ -135,6 +137,8 @@ msp install codex
 
 From that point, the host launches `msp mcp --provider <provider>` as its MCP server entrypoint.
 
+The first launch starts the shared daemon automatically. Later launches for the same config reuse it.
+
 ## Common Tasks
 
 ### Add a server
@@ -149,7 +153,7 @@ If the command is a single `http://` or `https://` URL, `msp` stores it as a nat
 msp add remote-demo https://example.com/mcp
 ```
 
-`add` only writes the server config. Refresh cached tools later with `msp reload --provider ...`, or let `msp mcp --provider ...` refresh all enabled servers during startup.
+`add` only writes the server config. Refresh cached tools later with `msp reload --provider ...`, or let the shared `msp mcp --provider ...` daemon refresh all enabled servers during startup.
 
 ### List servers
 
@@ -166,7 +170,7 @@ msp disable github
 msp enable github
 ```
 
-Disabled servers stay in the config and keep their cache files, but bulk `reload` and `mcp` startup skip them.
+Disabled servers stay in the config and keep their cache files, but bulk `reload` and daemon-managed `mcp` startup skip them.
 
 ### Show or update one server
 
@@ -237,6 +241,8 @@ msp update
 ```
 
 This checks GitHub Releases, downloads the newest build for the current platform, and replaces the current executable in place when a newer release exists.
+
+When the daemon is running, it is also responsible for periodic background self-update checks for `msp mcp` traffic.
 
 ## Install Into a Host
 

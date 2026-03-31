@@ -1,5 +1,4 @@
-mod cache;
-mod client;
+pub(crate) mod cache;
 mod server;
 #[cfg(test)]
 mod tests;
@@ -11,52 +10,39 @@ use std::path::Path;
 
 use rmcp::{ServiceExt, transport::stdio};
 
-use crate::config::{list_servers, load_config_table};
-use crate::console::operation_error;
-use crate::paths::format_path_for_display;
-use crate::reload::reload_server_with_provider;
-use crate::types::ModelProviderConfig;
-
-use self::cache::load_cached_toolsets;
 use self::server::SmartProxyMcpServer;
+use crate::console::operation_error;
+use crate::daemon;
+use crate::paths::format_path_for_display;
+use crate::types::ModelProviderConfig;
 
 pub async fn serve_cached_toolsets(
     config_path: &Path,
     provider: ModelProviderConfig,
 ) -> Result<(), Box<dyn Error>> {
     ensure_proxy_stdio_host_connection()?;
-
-    reload_all_toolsets(config_path, &provider)
+    daemon::ensure_daemon_running(config_path, None)
         .await
         .map_err(|error| {
             operation_error(
-                "mcp.reload_all_toolsets",
+                "mcp.ensure_daemon",
                 format!(
-                    "failed to reload configured MCP servers before starting proxy with config {}",
+                    "failed to start or connect to the daemon for config {}",
                     format_path_for_display(config_path)
                 ),
                 error,
             )
         })?;
-
-    let config = load_config_table(config_path).map_err(|error| {
-        operation_error(
-            "mcp.load_config",
-            format!(
-                "failed to load config from {}",
-                format_path_for_display(config_path)
-            ),
-            error,
-        )
-    })?;
-    let toolsets = load_cached_toolsets(&config).map_err(|error| {
-        operation_error(
-            "mcp.load_toolsets",
-            "failed to load cached toolsets from config",
-            error,
-        )
-    })?;
-    let service = SmartProxyMcpServer::new(toolsets)
+    let toolsets = daemon::load_toolsets(config_path, None, provider.provider_name())
+        .await
+        .map_err(|error| {
+            operation_error(
+                "mcp.load_toolsets",
+                "failed to load cached toolsets from the daemon",
+                error,
+            )
+        })?;
+    let service = SmartProxyMcpServer::new(config_path.to_path_buf(), toolsets)
         .serve(stdio())
         .await
         .map_err(map_proxy_serve_error)?;
@@ -106,35 +92,4 @@ fn map_proxy_serve_error(error: impl Error + 'static) -> Box<dyn Error> {
         "failed to start the proxy stdio MCP server",
         Box::new(error),
     )
-}
-
-async fn reload_all_toolsets(
-    config_path: &Path,
-    provider: &ModelProviderConfig,
-) -> Result<(), Box<dyn Error>> {
-    let servers = list_servers(config_path).map_err(|error| {
-        operation_error(
-            "mcp.reload_all_toolsets.list_servers",
-            format!(
-                "failed to list configured MCP servers from {} before startup reload",
-                format_path_for_display(config_path)
-            ),
-            error,
-        )
-    })?;
-
-    for server in servers.into_iter().filter(|server| server.enabled) {
-        let server_name = server.name;
-        reload_server_with_provider(config_path, &server_name, provider)
-            .await
-            .map_err(|error| {
-                operation_error(
-                    "mcp.reload_all_toolsets.reload_server",
-                    format!("failed to reload MCP server `{server_name}` before proxy startup"),
-                    error,
-                )
-            })?;
-    }
-
-    Ok(())
 }

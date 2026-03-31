@@ -7,12 +7,13 @@ use clap::Parser;
 
 #[cfg(test)]
 use crate::cli::ImportSource;
-use crate::cli::{Cli, Command, ProviderName};
+use crate::cli::{Cli, Command, DaemonCommand, ProviderName};
 use crate::config::{
     add_server, list_servers, load_config_table, load_server_config, remove_server,
     set_server_enabled, update_server_config,
 };
 use crate::console::{describe_command, operation_error, print_app_event};
+use crate::daemon;
 use crate::mcp_server;
 use crate::paths::{expand_tilde, format_path_for_display};
 use crate::reload::reload_server_with_provider;
@@ -35,10 +36,19 @@ use provider::{resolve_import_provider, resolve_install_import_provider};
 pub async fn run() -> Result<(), Box<dyn Error>> {
     let raw_args = std::env::args_os().collect::<Vec<OsString>>();
     let cli = Cli::parse();
-    if matches!(&cli.command, Some(Command::Mcp { .. })) {
+    if matches!(
+        &cli.command,
+        Some(Command::Daemon {
+            command: DaemonCommand::Run,
+            ..
+        })
+    ) {
         version_check::prepare_executable_for_background_update(&raw_args);
         version_check::spawn_periodic_self_update(raw_args.clone());
-    } else if !matches!(&cli.command, Some(Command::Update)) {
+    } else if !matches!(
+        &cli.command,
+        Some(Command::Update) | Some(Command::Daemon { .. })
+    ) {
         version_check::print_cached_update_notice();
     }
     let config_path = expand_tilde(&cli.config).map_err(|error| {
@@ -108,6 +118,9 @@ pub async fn run() -> Result<(), Box<dyn Error>> {
             name: None,
         }) => run_reload_all_command(&config_path, provider).await?,
         Some(Command::Mcp { provider }) => run_mcp_command(&config_path, provider).await?,
+        Some(Command::Daemon { socket, command }) => {
+            run_daemon_command(&config_path, socket.as_deref(), command).await?
+        }
         None => {
             if config_path.exists() {
                 let _ = load_config_table(&config_path).map_err(|error| {
@@ -125,6 +138,32 @@ pub async fn run() -> Result<(), Box<dyn Error>> {
     }
 
     Ok(())
+}
+
+async fn run_daemon_command(
+    config_path: &Path,
+    socket_override: Option<&Path>,
+    command: DaemonCommand,
+) -> Result<(), Box<dyn Error>> {
+    match command {
+        DaemonCommand::Run => daemon::run_daemon(config_path, socket_override).await,
+        DaemonCommand::Status => {
+            let status = daemon::request_status(config_path, socket_override).await?;
+            print_app_event(
+                "cli.daemon.status",
+                format!(
+                    "Daemon v{} pid {} on {} for {}",
+                    status.version, status.pid, status.socket_path, status.config_path
+                ),
+            );
+            Ok(())
+        }
+        DaemonCommand::Exit => {
+            daemon::request_exit(config_path, socket_override).await?;
+            print_app_event("cli.daemon.exit", "Daemon exit requested");
+            Ok(())
+        }
+    }
 }
 
 fn run_add_command(

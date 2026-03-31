@@ -976,6 +976,7 @@ dependencies = [
  "clap",
  "flate2",
  "futures",
+ "libc",
  "reqwest",
  "rmcp",
  "serde",

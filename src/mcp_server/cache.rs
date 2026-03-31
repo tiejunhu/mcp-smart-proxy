@@ -4,25 +4,24 @@ use std::path::Path;
 
 use toml::{Table, Value};
 
-use crate::config::{configured_server, server_is_enabled};
+use crate::config::server_is_enabled;
 use crate::paths::{cache_file_path_from_home, home_dir};
-use crate::types::{CachedTools, ConfiguredServer, ToolSnapshot};
+use crate::types::{CachedTools, ToolSnapshot};
 
 #[derive(Debug, Clone)]
-pub(super) struct CachedToolsetRecord {
-    pub(super) name: String,
-    pub(super) summary: String,
-    pub(super) server: ConfiguredServer,
-    pub(super) tools: Vec<ToolSnapshot>,
+pub(crate) struct CachedToolsetRecord {
+    pub(crate) name: String,
+    pub(crate) summary: String,
+    pub(crate) tools: Vec<ToolSnapshot>,
 }
 
-pub(super) fn load_cached_toolsets(
+pub(crate) fn load_cached_toolsets(
     config: &Table,
 ) -> Result<Vec<CachedToolsetRecord>, Box<dyn Error>> {
     load_cached_toolsets_from_home(config, &home_dir()?)
 }
 
-pub(super) fn load_cached_toolsets_from_home(
+pub(crate) fn load_cached_toolsets_from_home(
     config: &Table,
     home: &Path,
 ) -> Result<Vec<CachedToolsetRecord>, Box<dyn Error>> {
@@ -39,7 +38,6 @@ pub(super) fn load_cached_toolsets_from_home(
             continue;
         }
 
-        let (_, server) = configured_server(config, &name)?;
         let cache_path = cache_file_path_from_home(home, &name)?;
         if !cache_path.exists() {
             continue;
@@ -49,7 +47,6 @@ pub(super) fn load_cached_toolsets_from_home(
         toolsets.push(CachedToolsetRecord {
             name,
             summary: cached.summary,
-            server,
             tools: cached.tools,
         });
     }
