@@ -139,6 +139,14 @@ From that point, the host launches `msp mcp --provider <provider>` as its MCP se
 
 The first launch starts the shared daemon automatically. Later launches for the same config reuse it.
 
+You can inspect or control that shared process directly:
+
+```bash
+msp daemon status
+msp daemon stop
+msp daemon restart
+```
+
 ## Common Tasks
 
 ### Add a server
@@ -243,6 +251,28 @@ msp update
 This checks GitHub Releases, downloads the newest build for the current platform, and replaces the current executable in place when a newer release exists.
 
 When the daemon is running, it is also responsible for periodic background self-update checks for `msp mcp` traffic.
+
+### Manage the shared daemon
+
+Check whether the daemon for the current config is running:
+
+```bash
+msp daemon status
+```
+
+Stop the daemon and remove its socket and pid state:
+
+```bash
+msp daemon stop
+```
+
+Restart the daemon for the current config:
+
+```bash
+msp daemon restart
+```
+
+All three commands also accept `--socket <path>` when you need to target a custom daemon socket.
 
 ## Install Into a Host
 

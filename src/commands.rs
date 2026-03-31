@@ -158,9 +158,25 @@ async fn run_daemon_command(
             );
             Ok(())
         }
-        DaemonCommand::Exit => {
-            daemon::request_exit(config_path, socket_override).await?;
-            print_app_event("cli.daemon.exit", "Daemon exit requested");
+        DaemonCommand::Stop => {
+            let stopped = daemon::stop_daemon(config_path, socket_override).await?;
+            let message = if stopped {
+                "Daemon stopped"
+            } else {
+                "Daemon is not running"
+            };
+            print_app_event("cli.daemon.stop", message);
+            Ok(())
+        }
+        DaemonCommand::Restart => {
+            let status = daemon::restart_daemon(config_path, socket_override).await?;
+            print_app_event(
+                "cli.daemon.restart",
+                format!(
+                    "Daemon restarted as v{} pid {} on {} for {}",
+                    status.version, status.pid, status.socket_path, status.config_path
+                ),
+            );
             Ok(())
         }
     }

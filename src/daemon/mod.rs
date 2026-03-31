@@ -40,20 +40,9 @@ pub async fn ensure_daemon_running(
     config_path: &Path,
     socket_override: Option<&Path>,
 ) -> Result<DaemonStatus, Box<dyn Error>> {
-    let socket_path = resolve_socket_path(config_path, socket_override)?;
-
     match probe_status(config_path, socket_override).await? {
         Some(status) if status.version == env!("CARGO_PKG_VERSION") => Ok(status),
-        Some(_) => {
-            request_exit(config_path, socket_override).await?;
-            spawn_detached_daemon(config_path, socket_override)?;
-            request_status(config_path, socket_override).await
-        }
-        None => {
-            cleanup_runtime_state(&socket_path)?;
-            spawn_detached_daemon(config_path, socket_override)?;
-            request_status(config_path, socket_override).await
-        }
+        Some(_) | None => restart_daemon(config_path, socket_override).await,
     }
 }
 
@@ -84,6 +73,33 @@ pub async fn request_exit(
         Some(other) => Err(format!("unexpected daemon exit response: {other:?}").into()),
         None => Ok(()),
     }
+}
+
+pub async fn stop_daemon(
+    config_path: &Path,
+    socket_override: Option<&Path>,
+) -> Result<bool, Box<dyn Error>> {
+    let socket_path = resolve_socket_path(config_path, socket_override)?;
+
+    match probe_status(config_path, socket_override).await? {
+        Some(_) => {
+            request_exit(config_path, socket_override).await?;
+            Ok(true)
+        }
+        None => {
+            cleanup_runtime_state(&socket_path)?;
+            Ok(false)
+        }
+    }
+}
+
+pub async fn restart_daemon(
+    config_path: &Path,
+    socket_override: Option<&Path>,
+) -> Result<DaemonStatus, Box<dyn Error>> {
+    let _ = stop_daemon(config_path, socket_override).await?;
+    spawn_detached_daemon(config_path, socket_override)?;
+    request_status(config_path, socket_override).await
 }
 
 pub async fn load_toolsets(

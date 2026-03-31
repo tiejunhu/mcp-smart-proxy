@@ -104,7 +104,7 @@ pub enum Command {
         #[arg(long, value_enum)]
         provider: Option<ProviderName>,
     },
-    #[command(hide = true)]
+    /// Manage the shared background daemon.
     Daemon {
         #[arg(long, value_name = "PATH")]
         socket: Option<PathBuf>,
@@ -115,9 +115,12 @@ pub enum Command {
 
 #[derive(Debug, Clone, Subcommand)]
 pub enum DaemonCommand {
+    #[command(hide = true)]
     Run,
     Status,
-    Exit,
+    #[command(alias = "exit")]
+    Stop,
+    Restart,
 }
 
 #[derive(Debug, Clone, ValueEnum)]
@@ -357,7 +360,7 @@ mod tests {
     }
 
     #[test]
-    fn parses_hidden_daemon_run_subcommand() {
+    fn parses_daemon_run_subcommand() {
         let cli = Cli::parse_from(["msp", "daemon", "run"]);
 
         match cli.command {
@@ -370,13 +373,52 @@ mod tests {
     }
 
     #[test]
-    fn parses_hidden_daemon_socket_override() {
+    fn parses_daemon_socket_override() {
         let cli = Cli::parse_from(["msp", "daemon", "--socket", "/tmp/msp.sock", "status"]);
 
         match cli.command {
             Some(Command::Daemon { socket, command }) => {
                 assert_eq!(socket, Some(PathBuf::from("/tmp/msp.sock")));
                 assert!(matches!(command, DaemonCommand::Status));
+            }
+            other => panic!("expected daemon command, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_daemon_stop_subcommand() {
+        let cli = Cli::parse_from(["msp", "daemon", "stop"]);
+
+        match cli.command {
+            Some(Command::Daemon { socket, command }) => {
+                assert!(socket.is_none());
+                assert!(matches!(command, DaemonCommand::Stop));
+            }
+            other => panic!("expected daemon command, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_daemon_exit_alias_as_stop() {
+        let cli = Cli::parse_from(["msp", "daemon", "exit"]);
+
+        match cli.command {
+            Some(Command::Daemon { socket, command }) => {
+                assert!(socket.is_none());
+                assert!(matches!(command, DaemonCommand::Stop));
+            }
+            other => panic!("expected daemon command, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_daemon_restart_subcommand() {
+        let cli = Cli::parse_from(["msp", "daemon", "restart"]);
+
+        match cli.command {
+            Some(Command::Daemon { socket, command }) => {
+                assert!(socket.is_none());
+                assert!(matches!(command, DaemonCommand::Restart));
             }
             other => panic!("expected daemon command, got {other:?}"),
         }
