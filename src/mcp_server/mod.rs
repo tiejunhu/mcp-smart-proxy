@@ -14,7 +14,7 @@ use rmcp::{ServiceExt, transport::stdio};
 use crate::config::{list_servers, load_config_table};
 use crate::console::operation_error;
 use crate::paths::format_path_for_display;
-use crate::reload::{reload_server, reload_server_with_provider};
+use crate::reload::reload_server_with_provider;
 use crate::types::ModelProviderConfig;
 
 use self::cache::load_cached_toolsets;
@@ -22,11 +22,11 @@ use self::server::SmartProxyMcpServer;
 
 pub async fn serve_cached_toolsets(
     config_path: &Path,
-    provider: Option<ModelProviderConfig>,
+    provider: ModelProviderConfig,
 ) -> Result<(), Box<dyn Error>> {
     ensure_proxy_stdio_host_connection()?;
 
-    reload_all_toolsets(config_path, provider.as_ref())
+    reload_all_toolsets(config_path, &provider)
         .await
         .map_err(|error| {
             operation_error(
@@ -110,7 +110,7 @@ fn map_proxy_serve_error(error: impl Error + 'static) -> Box<dyn Error> {
 
 async fn reload_all_toolsets(
     config_path: &Path,
-    provider: Option<&ModelProviderConfig>,
+    provider: &ModelProviderConfig,
 ) -> Result<(), Box<dyn Error>> {
     let servers = list_servers(config_path).map_err(|error| {
         operation_error(
@@ -125,19 +125,15 @@ async fn reload_all_toolsets(
 
     for server in servers.into_iter().filter(|server| server.enabled) {
         let server_name = server.name;
-        match provider {
-            Some(provider) => {
-                reload_server_with_provider(config_path, &server_name, provider).await
-            }
-            None => reload_server(config_path, &server_name).await,
-        }
-        .map_err(|error| {
-            operation_error(
-                "mcp.reload_all_toolsets.reload_server",
-                format!("failed to reload MCP server `{server_name}` before proxy startup"),
-                error,
-            )
-        })?;
+        reload_server_with_provider(config_path, &server_name, provider)
+            .await
+            .map_err(|error| {
+                operation_error(
+                    "mcp.reload_all_toolsets.reload_server",
+                    format!("failed to reload MCP server `{server_name}` before proxy startup"),
+                    error,
+                )
+            })?;
     }
 
     Ok(())

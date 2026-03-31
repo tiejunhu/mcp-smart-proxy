@@ -23,10 +23,8 @@ pub struct Cli {
 
 #[derive(Debug, Subcommand)]
 pub enum Command {
-    /// Add a managed MCP server and refresh its cached tools.
+    /// Add a managed MCP server to the local config.
     Add {
-        #[arg(long, value_enum)]
-        provider: Option<ProviderName>,
         name: String,
         #[arg(required = true, num_args = 1.., trailing_var_arg = true, allow_hyphen_values = true)]
         command: Vec<String>,
@@ -186,12 +184,10 @@ mod tests {
     }
 
     #[test]
-    fn parses_add_with_provider_override() {
+    fn parses_add_command() {
         let cli = Cli::parse_from([
             "msp",
             "add",
-            "--provider",
-            "codex",
             "github",
             "npx",
             "-y",
@@ -199,12 +195,7 @@ mod tests {
         ]);
 
         match cli.command {
-            Some(Command::Add {
-                provider,
-                name,
-                command,
-            }) => {
-                assert!(matches!(provider, Some(ProviderName::Codex)));
+            Some(Command::Add { name, command }) => {
                 assert_eq!(name, "github");
                 assert_eq!(
                     command,
@@ -217,6 +208,14 @@ mod tests {
             }
             other => panic!("expected add command, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn rejects_add_provider_flag() {
+        let error = Cli::try_parse_from(["msp", "add", "--provider", "codex", "github", "npx"])
+            .unwrap_err();
+
+        assert_eq!(error.kind(), ErrorKind::UnknownArgument);
     }
 
     #[test]

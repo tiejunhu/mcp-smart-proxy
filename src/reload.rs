@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use rmcp::model::Tool;
 mod summarizer;
 
-use crate::config::{configured_server, load_config_table, load_model_provider_config};
+use crate::config::{configured_server, load_config_table};
 use crate::console::{
     ExternalOutputCapture, operation_error, print_external_command_failure_with_captured_stderr,
 };
@@ -24,17 +24,6 @@ use crate::types::{
 pub struct ReloadResult {
     pub cache_path: PathBuf,
     pub updated: bool,
-}
-
-pub async fn reload_server(config_path: &Path, name: &str) -> Result<ReloadResult, Box<dyn Error>> {
-    let provider = load_model_provider_config("codex").map_err(|error| {
-        operation_error(
-            "reload.load_provider",
-            "failed to resolve the default summary provider",
-            error,
-        )
-    })?;
-    reload_server_with_resolved_provider(config_path, name, &provider).await
 }
 
 pub async fn reload_server_with_provider(

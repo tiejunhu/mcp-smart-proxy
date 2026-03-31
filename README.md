@@ -86,7 +86,7 @@ msp restore codex
 To add a new server after that:
 
 ```bash
-msp add --provider codex github npx -y @modelcontextprotocol/server-github
+msp add github npx -y @modelcontextprotocol/server-github
 ```
 
 ### Fastest path for OpenCode or Claude Code
@@ -124,7 +124,7 @@ msp restore claude
 Add a server:
 
 ```bash
-msp add --provider codex github npx -y @modelcontextprotocol/server-github
+msp add github npx -y @modelcontextprotocol/server-github
 ```
 
 Install `msp` into your host:
@@ -140,7 +140,7 @@ From that point, the host launches `msp mcp --provider <provider>` as its MCP se
 ### Add a server
 
 ```bash
-msp add --provider codex github npx -y @modelcontextprotocol/server-github
+msp add github npx -y @modelcontextprotocol/server-github
 ```
 
 If the command is a single `http://` or `https://` URL, `msp` stores it as a native remote server:
@@ -149,7 +149,7 @@ If the command is a single `http://` or `https://` URL, `msp` stores it as a nat
 msp add remote-demo https://example.com/mcp
 ```
 
-`add` immediately refreshes the new server. If refresh fails, the new config entry is rolled back.
+`add` only writes the server config. Refresh cached tools later with `msp reload --provider ...`, or let `msp mcp --provider ...` refresh all enabled servers during startup.
 
 ### List servers
 
@@ -359,7 +359,7 @@ msp mcp --provider codex
 
 `msp mcp` is a stdio MCP server entrypoint, not an interactive shell command. Start it from an MCP host such as Codex, OpenCode, or Claude Code, or install it with `msp install ...`.
 
-Before the proxy starts, `msp mcp` reloads every enabled configured server. If any reload fails, the proxy does not report ready upstream.
+Before the proxy starts, `msp mcp --provider ...` reloads every enabled configured server with the selected summary provider. If any reload fails, the proxy does not report ready upstream.
 
 ## Background Self-Update
 

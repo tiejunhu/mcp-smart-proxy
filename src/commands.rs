@@ -46,11 +46,7 @@ pub async fn run() -> Result<(), Box<dyn Error>> {
     })?;
 
     match cli.command {
-        Some(Command::Add {
-            provider,
-            name,
-            command,
-        }) => run_add_command(&config_path, provider, &name, command).await?,
+        Some(Command::Add { name, command }) => run_add_command(&config_path, &name, command)?,
         Some(Command::List) => run_list_command(&config_path)?,
         Some(Command::Enable { name }) => run_set_enabled_command(&config_path, &name, true)?,
         Some(Command::Disable { name }) => run_set_enabled_command(&config_path, &name, false)?,
@@ -131,20 +127,11 @@ pub async fn run() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-async fn run_add_command(
+fn run_add_command(
     config_path: &Path,
-    provider_override: Option<ProviderName>,
     name: &str,
     command: Vec<String>,
 ) -> Result<(), Box<dyn Error>> {
-    let resolved_provider =
-        resolve_default_command_provider(provider_override).map_err(|error| {
-            operation_error(
-                "cli.add.load_provider",
-                "failed to resolve the summary provider before adding the server",
-                error,
-            )
-        })?;
     let server_name = add_server(config_path, name, command).map_err(|error| {
         operation_error(
             "cli.add",
@@ -155,38 +142,11 @@ async fn run_add_command(
             error,
         )
     })?;
-    let reload_result = match reload_server_with_provider(
-        config_path,
-        &server_name,
-        &resolved_provider,
-    )
-    .await
-    {
-        Ok(result) => result,
-        Err(error) => {
-            remove_server(config_path, &server_name).map_err(|rollback_error| {
-                    operation_error(
-                        "cli.add.rollback",
-                        format!(
-                            "failed to roll back newly added MCP server `{server_name}` in {} after reload failure",
-                            format_path_for_display(config_path)
-                        ),
-                        rollback_error,
-                    )
-                })?;
-            return Err(operation_error(
-                "cli.add.reload",
-                format!("failed to reload newly added MCP server `{server_name}`"),
-                error,
-            ));
-        }
-    };
     print_app_event(
         "cli.add",
         format!(
-            "Added MCP server `{server_name}` to {} and reloaded cached tools into {}",
+            "Added MCP server `{server_name}` to {}; cached tools will refresh on `msp reload --provider ...` or `msp mcp --provider ...`",
             format_path_for_display(config_path),
-            format_path_for_display(&reload_result.cache_path)
         ),
     );
     Ok(())
@@ -501,7 +461,7 @@ async fn run_mcp_command(
                 error,
             )
         })?;
-    mcp_server::serve_cached_toolsets(config_path, Some(resolved_provider))
+    mcp_server::serve_cached_toolsets(config_path, resolved_provider)
         .await
         .map_err(|error| {
             operation_error(
