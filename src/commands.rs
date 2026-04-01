@@ -123,7 +123,10 @@ pub async fn run() -> Result<(), Box<dyn Error>> {
             provider,
             name: None,
         }) => run_reload_all_command(&config_path, provider).await?,
-        Some(Command::Mcp { provider }) => run_mcp_command(&config_path, provider).await?,
+        Some(Command::Mcp {
+            provider,
+            enable_input,
+        }) => run_mcp_command(&config_path, provider, enable_input).await?,
         Some(Command::Input { command }) => match command {
             InputCommand::Test => run_input_test_command()?,
             InputCommand::Popup => run_input_popup_command()?,
@@ -517,6 +520,7 @@ async fn run_reload_all_command(
 async fn run_mcp_command(
     config_path: &Path,
     provider_override: Option<ProviderName>,
+    enable_input: bool,
 ) -> Result<(), Box<dyn Error>> {
     let resolved_provider =
         resolve_default_command_provider(provider_override).map_err(|error| {
@@ -526,7 +530,7 @@ async fn run_mcp_command(
                 error,
             )
         })?;
-    mcp_server::serve_cached_toolsets(config_path, resolved_provider)
+    mcp_server::serve_cached_toolsets(config_path, resolved_provider, enable_input)
         .await
         .map_err(|error| {
             operation_error(

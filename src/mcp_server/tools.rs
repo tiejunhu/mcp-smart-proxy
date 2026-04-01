@@ -38,28 +38,31 @@ pub(super) struct ToolCatalog {
     activate_tool: Tool,
     activate_tool_detail: Tool,
     call_tool_in_external_mcp: Tool,
-    request_user_input_in_popup: Tool,
+    request_user_input_in_popup: Option<Tool>,
 }
 
 impl ToolCatalog {
-    pub(super) fn new(toolsets: &[CachedToolsetRecord]) -> Self {
+    pub(super) fn new(toolsets: &[CachedToolsetRecord], enable_input: bool) -> Self {
         Self {
             activate_tool: activate_tool_definition(toolsets),
             activate_tool_detail: activate_external_mcp_tool_definition(),
             call_tool_in_external_mcp: call_tool_in_external_mcp_definition(
                 CALL_TOOL_IN_EXTERNAL_MCP_NAME,
             ),
-            request_user_input_in_popup: request_user_input_in_popup_definition(),
+            request_user_input_in_popup: enable_input.then(request_user_input_in_popup_definition),
         }
     }
 
     pub(super) fn list(&self) -> Vec<Tool> {
-        vec![
+        let mut tools = vec![
             self.activate_tool.clone(),
             self.activate_tool_detail.clone(),
             self.call_tool_in_external_mcp.clone(),
-            self.request_user_input_in_popup.clone(),
-        ]
+        ];
+        if let Some(tool) = &self.request_user_input_in_popup {
+            tools.push(tool.clone());
+        }
+        tools
     }
 
     pub(super) fn get(&self, name: &str) -> Option<Tool> {
@@ -67,7 +70,7 @@ impl ToolCatalog {
             ACTIVATE_EXTERNAL_MCP_NAME => Some(self.activate_tool.clone()),
             ACTIVATE_EXTERNAL_MCP_TOOL_NAME => Some(self.activate_tool_detail.clone()),
             CALL_TOOL_IN_EXTERNAL_MCP_NAME => Some(self.call_tool_in_external_mcp.clone()),
-            REQUEST_USER_INPUT_IN_POPUP_NAME => Some(self.request_user_input_in_popup.clone()),
+            REQUEST_USER_INPUT_IN_POPUP_NAME => self.request_user_input_in_popup.clone(),
             _ => None,
         }
     }

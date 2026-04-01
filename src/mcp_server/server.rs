@@ -25,15 +25,21 @@ use super::tools::{
 
 pub(super) struct SmartProxyMcpServer {
     config_path: PathBuf,
+    input_enabled: bool,
     tools: ToolCatalog,
     toolsets: Vec<CachedToolsetRecord>,
 }
 
 impl SmartProxyMcpServer {
-    pub(super) fn new(config_path: PathBuf, toolsets: Vec<CachedToolsetRecord>) -> Self {
-        let tools = ToolCatalog::new(&toolsets);
+    pub(super) fn new(
+        config_path: PathBuf,
+        toolsets: Vec<CachedToolsetRecord>,
+        input_enabled: bool,
+    ) -> Self {
+        let tools = ToolCatalog::new(&toolsets, input_enabled);
         Self {
             config_path,
+            input_enabled,
             tools,
             toolsets,
         }
@@ -77,6 +83,9 @@ impl SmartProxyMcpServer {
         &self,
         arguments: JsonMap<String, JsonValue>,
     ) -> Result<CallToolResult, McpError> {
+        if !self.input_enabled {
+            return Err(McpError::method_not_found::<CallToolRequestMethod>());
+        }
         let params: PopupInputRequest =
             parse_tool_request(REQUEST_USER_INPUT_IN_POPUP_NAME, arguments)?;
         let response = request_user_input_in_popup(&params)
@@ -110,10 +119,12 @@ impl SmartProxyMcpServer {
 impl ServerHandler for SmartProxyMcpServer {
     fn get_info(&self) -> ServerInfo {
         let mut info = ServerInfo::default();
-        info.instructions = Some(
+        let instructions = if self.input_enabled {
             "Use `activate_external_mcp` to inspect cached tool names, `activate_external_mcp_tool` to inspect one full cached tool definition, `call_tool_in_external_mcp` to invoke a specific downstream MCP tool, and `request_user_input_in_popup` when you need a focused popup choice from the user."
-                .into(),
-        );
+        } else {
+            "Use `activate_external_mcp` to inspect cached tool names, `activate_external_mcp_tool` to inspect one full cached tool definition, and `call_tool_in_external_mcp` to invoke a specific downstream MCP tool."
+        };
+        info.instructions = Some(instructions.into());
         info.capabilities = ServerCapabilities::builder().enable_tools().build();
         info
     }

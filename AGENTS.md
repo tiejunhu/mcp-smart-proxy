@@ -2,7 +2,7 @@
 
 - Use English for all code, comments, and documentation, to ensure that it is accessible to the widest possible audience.
 - Keep all usage of this project in README.md, update it as needed, and make sure it is clear and concise.
-- Before making any changes, present the plan (in the same language as user's input) to the user and ask the user for approving by giving user options: 1. Approve 2. Reject 3. <input a new plan>
+- Before making any changes, present the plan (in the same language as user's input) to the user and ask the user for approving using any available request user input tool, or just ask the user to reply with "yes" or "no" in the console (when no input tool can be used).
 - Reduce complexity, during reading and editing the code, find complexity and try to reduce it.
 
 # Code edit
@@ -29,7 +29,7 @@
 - Keep self-update logic split by concern: version comparison, state-file persistence, binary installation, and runtime orchestration should not live in a single Rust module.
 - Keep local config record construction centralized: adding or importing a server should go through shared draft builders instead of duplicating transport-to-table conversion logic.
 - Keep MCP proxy logic split between cache loading, tool-schema helpers, downstream client lifecycle, and request dispatch so `src/mcp_server/` remains easy to extend without re-reading one large file.
-- Keep popup input logic split by concern: shared request/response types stay under `src/input_popup/`, the iced UI stays in its own module, and CLI/MCP entrypoints should call the shared popup runner instead of duplicating dialog behavior.
+- Keep popup input logic split by concern: shared request/response types stay under `src/input_popup/`, the gpui UI stays in its own module, and CLI/MCP entrypoints should call the shared popup runner instead of duplicating dialog behavior.
 - Keep remote OAuth split by concern: generic OAuth discovery and token storage should stay reusable under `src/remote/oauth.rs`, while unsupported hosted endpoints should be rejected earlier by shared config-level remote URL validation.
 
 # Packages

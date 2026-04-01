@@ -11,8 +11,8 @@ use crate::types::{CachedTools, CachedToolsetRecord, ToolSnapshot};
 use super::cache::load_cached_toolsets_from_home;
 use super::tools::{
     CALL_TOOL_IN_EXTERNAL_MCP_NAME, REQUEST_USER_INPUT_IN_POPUP_NAME, STDIO_HOST_REQUIRED_MESSAGE,
-    build_activate_tool_description, build_activate_tool_detail_result, build_activate_tool_result,
-    call_tool_in_external_mcp_definition, parse_tool_arguments_json,
+    ToolCatalog, build_activate_tool_description, build_activate_tool_detail_result,
+    build_activate_tool_result, call_tool_in_external_mcp_definition, parse_tool_arguments_json,
     request_user_input_in_popup_definition, resolve_toolset_name,
 };
 use super::validate_proxy_stdio_launch;
@@ -258,6 +258,38 @@ fn popup_input_tool_definition_contains_questions_schema() {
 
     assert_eq!(tool.name.as_ref(), REQUEST_USER_INPUT_IN_POPUP_NAME);
     assert!(properties.contains_key("questions"));
+}
+
+#[test]
+fn tool_catalog_hides_popup_input_tool_when_disabled() {
+    let catalog = ToolCatalog::new(&[], false);
+
+    assert!(
+        catalog
+            .list()
+            .iter()
+            .all(|tool| tool.name.as_ref() != REQUEST_USER_INPUT_IN_POPUP_NAME)
+    );
+    assert!(catalog.get(REQUEST_USER_INPUT_IN_POPUP_NAME).is_none());
+}
+
+#[test]
+fn tool_catalog_exposes_popup_input_tool_when_enabled() {
+    let catalog = ToolCatalog::new(&[], true);
+
+    assert!(
+        catalog
+            .list()
+            .iter()
+            .any(|tool| tool.name.as_ref() == REQUEST_USER_INPUT_IN_POPUP_NAME)
+    );
+    assert_eq!(
+        catalog
+            .get(REQUEST_USER_INPUT_IN_POPUP_NAME)
+            .as_ref()
+            .map(|tool| tool.name.as_ref()),
+        Some(REQUEST_USER_INPUT_IN_POPUP_NAME)
+    );
 }
 
 #[test]

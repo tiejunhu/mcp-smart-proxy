@@ -103,6 +103,9 @@ pub enum Command {
     Mcp {
         #[arg(long, value_enum)]
         provider: Option<ProviderName>,
+        /// Expose popup-based user input tools to the MCP host.
+        #[arg(long)]
+        enable_input: bool,
     },
     /// Open popup-based interactive input helpers.
     Input {
@@ -377,8 +380,28 @@ mod tests {
         let cli = Cli::parse_from(["msp", "mcp", "--provider", "codex"]);
 
         match cli.command {
-            Some(Command::Mcp { provider }) => {
+            Some(Command::Mcp {
+                provider,
+                enable_input,
+            }) => {
                 assert!(matches!(provider, Some(ProviderName::Codex)));
+                assert!(!enable_input);
+            }
+            other => panic!("expected mcp command, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_mcp_with_enable_input() {
+        let cli = Cli::parse_from(["msp", "mcp", "--enable-input"]);
+
+        match cli.command {
+            Some(Command::Mcp {
+                provider,
+                enable_input,
+            }) => {
+                assert!(provider.is_none());
+                assert!(enable_input);
             }
             other => panic!("expected mcp command, got {other:?}"),
         }

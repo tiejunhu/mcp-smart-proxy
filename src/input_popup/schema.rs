@@ -13,7 +13,6 @@ pub struct PopupInputRequest {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct PopupQuestion {
     pub id: String,
-    pub header: String,
     pub question: String,
     pub options: Vec<PopupOption>,
 }
@@ -87,7 +86,6 @@ mod tests {
         let request = PopupInputRequest {
             questions: vec![PopupQuestion {
                 id: "choice".to_string(),
-                header: "Choice".to_string(),
                 question: "Pick one".to_string(),
                 options: vec![
                     PopupOption {

@@ -19,11 +19,11 @@ The installed binary name is `msp`. Running `msp` without arguments shows the to
 
 1. Connects to each configured MCP server and caches its tool metadata.
 2. Generates a short summary for each server by using a configured provider: `codex`, `opencode`, or `claude`.
-3. Starts a stdio MCP proxy that exposes only these four tools:
+3. Starts a stdio MCP proxy that exposes these proxy tools:
    - `activate_external_mcp`
    - `activate_external_mcp_tool`
    - `call_tool_in_external_mcp`
-   - `request_user_input_in_popup`
+   - `request_user_input_in_popup` when started with `msp mcp --enable-input`
 
 Agents first inspect the cached server index, optionally inspect one tool definition, and then call the downstream tool through the proxy.
 
@@ -236,7 +236,9 @@ Open a sample popup dialog locally:
 msp input test
 ```
 
-The MCP tool `request_user_input_in_popup` uses the same popup flow. It always appends a final `Other` option, returns one answer per question, and returns an empty `answers` object when the user cancels or closes the dialog.
+The MCP tool `request_user_input_in_popup` is exposed only when the host starts `msp mcp --enable-input`. It uses the same GPUI-backed popup flow, always appends a final `Other` option, returns one answer per question, and returns an empty `answers` object when the user cancels or closes the dialog.
+
+On macOS, the GPUI popup build requires a full Xcode installation with the `metal` tool available through `xcrun`, not just Command Line Tools.
 
 ### Log in or out of a remote server
 
