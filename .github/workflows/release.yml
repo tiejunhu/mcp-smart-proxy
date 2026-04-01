@@ -109,16 +109,14 @@ jobs:
       - build-macos
 
     steps:
-      - name: Check out repository
-        uses: actions/checkout@v6
-
       - name: Download packaged artifacts
         uses: actions/download-artifact@v8
         with:
           path: dist
 
       - name: Publish GitHub release
-        uses: softprops/action-gh-release@v2
-        with:
-          files: dist/*/*.tar.gz
-          generate_release_notes: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release create "${GITHUB_REF_NAME}" dist/*/*.tar.gz --generate-notes --repo "${GITHUB_REPOSITORY}"
