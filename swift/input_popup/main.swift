@@ -624,7 +624,8 @@ final class PopupWindowController: NSWindowController, NSWindowDelegate {
     private let request: PopupInputRequest
     private let questionViews: [QuestionView]
     private let shortcutAssignments: [[Character?]]
-    private let statusLabel = NSTextField(wrappingLabelWithString: "")
+    private let progressLabel = NSTextField(wrappingLabelWithString: "")
+    private let countdownLabel = NSTextField(wrappingLabelWithString: "")
     private let errorLabel = NSTextField(wrappingLabelWithString: "")
     private weak var contentScrollView: NSScrollView?
     private weak var contentStack: NSStackView?
@@ -922,10 +923,15 @@ final class PopupWindowController: NSWindowController, NSWindowDelegate {
         let titleLabel = NSTextField(labelWithString: "Answer one question at a time")
         titleLabel.font = .systemFont(ofSize: 18, weight: .semibold)
 
-        statusLabel.font = .systemFont(ofSize: 12)
-        statusLabel.textColor = .secondaryLabelColor
-        statusLabel.maximumNumberOfLines = 0
-        statusLabel.translatesAutoresizingMaskIntoConstraints = false
+        progressLabel.font = .systemFont(ofSize: 15, weight: .semibold)
+        progressLabel.textColor = .labelColor
+        progressLabel.maximumNumberOfLines = 1
+        progressLabel.translatesAutoresizingMaskIntoConstraints = false
+
+        countdownLabel.font = .systemFont(ofSize: 14)
+        countdownLabel.textColor = .secondaryLabelColor
+        countdownLabel.maximumNumberOfLines = 0
+        countdownLabel.translatesAutoresizingMaskIntoConstraints = false
 
         let shortcutHelpLabel = NSTextField(
             wrappingLabelWithString:
@@ -937,9 +943,11 @@ final class PopupWindowController: NSWindowController, NSWindowDelegate {
         shortcutHelpLabel.translatesAutoresizingMaskIntoConstraints = false
 
         stack.addArrangedSubview(titleLabel)
-        stack.addArrangedSubview(statusLabel)
+        stack.addArrangedSubview(progressLabel)
+        stack.addArrangedSubview(countdownLabel)
         stack.addArrangedSubview(shortcutHelpLabel)
-        statusLabel.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+        progressLabel.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+        countdownLabel.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
         shortcutHelpLabel.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
 
         return stack
@@ -1089,20 +1097,22 @@ final class PopupWindowController: NSWindowController, NSWindowDelegate {
 
     private func updateStatusLabel() {
         guard questionViews.indices.contains(activeQuestionIndex) else {
-            statusLabel.stringValue = ""
+            progressLabel.stringValue = ""
+            countdownLabel.stringValue = ""
             return
         }
 
         let questionNumber = activeQuestionIndex + 1
         let totalQuestions = questionViews.count
+        progressLabel.stringValue = "Question \(questionNumber) of \(totalQuestions)"
         if questionTimer != nil {
-            statusLabel.stringValue =
-                "Question \(questionNumber) of \(totalQuestions). If you do nothing for \(remainingQuestionSeconds) seconds, the first option is selected automatically."
+            countdownLabel.stringValue =
+                "Auto-selects the first option in \(remainingQuestionSeconds) seconds unless you interact."
             return
         }
 
-        statusLabel.stringValue =
-            "Question \(questionNumber) of \(totalQuestions). The timer stops after your first interaction. Confirm this answer to continue."
+        countdownLabel.stringValue =
+            "Timer stopped. Confirm this answer to continue."
     }
 
     private func nextUnansweredQuestionIndex(startingAt startIndex: Int) -> Int? {
