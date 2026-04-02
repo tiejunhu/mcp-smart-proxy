@@ -2,6 +2,7 @@ import AppKit
 import Foundation
 
 private let otherLabel = "Other"
+private let optionShortcutKeys = Array("123456789abcdefghijklmnopqrstuvwxyz")
 
 struct PopupInputRequest: Decodable {
     let questions: [PopupQuestion]
@@ -30,27 +31,58 @@ struct PopupAnswerValue: Encodable {
     let answers: [String]
 }
 
-final class AutoSelectingTextField: NSTextField {
-    var onFocus: (() -> Void)?
+private enum AnswerInputSource {
+    case keyboard
+    case mouse
+}
 
-    override func becomeFirstResponder() -> Bool {
-        onFocus?()
-        return super.becomeFirstResponder()
+final class PopupWindow: NSWindow {
+    var onShortcutKey: ((Character) -> Bool)?
+
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        let disallowedModifiers = NSEvent.ModifierFlags([.command, .control, .option, .function])
+        guard
+            let onShortcutKey,
+            event.type == .keyDown,
+            event.modifierFlags.intersection(disallowedModifiers).isEmpty,
+            let character = event.charactersIgnoringModifiers?.lowercased(),
+            character.count == 1,
+            let shortcut = character.first
+        else {
+            return super.performKeyEquivalent(with: event)
+        }
+
+        if onShortcutKey(shortcut) {
+            return true
+        }
+
+        return super.performKeyEquivalent(with: event)
     }
+}
+
+final class AutoSelectingTextField: NSTextField {
+    var onMouseDown: (() -> Void)?
 
     override func mouseDown(with event: NSEvent) {
-        onFocus?()
+        onMouseDown?()
         super.mouseDown(with: event)
     }
 }
 
 final class QuestionView: NSStackView, NSTextFieldDelegate {
     private let question: PopupQuestion
+    private let shortcuts: [Character?]
     private var optionButtons: [NSButton] = []
     private let customField = AutoSelectingTextField(string: "")
+    private var selectedIndex: Int?
+    private var answerInputSource: AnswerInputSource?
+    private var pendingKeyboardOtherConfirmation = false
+    var onAnswerStateChanged: (() -> Void)?
+    var onKeyboardAnswerConfirmed: (() -> Void)?
 
-    init(question: PopupQuestion) {
+    init(question: PopupQuestion, shortcuts: [Character?]) {
         self.question = question
+        self.shortcuts = shortcuts
         super.init(frame: .zero)
         orientation = .vertical
         alignment = .leading
@@ -63,7 +95,7 @@ final class QuestionView: NSStackView, NSTextFieldDelegate {
 
         customField.placeholderString = "Enter a custom answer"
         customField.delegate = self
-        customField.onFocus = { [weak self] in
+        customField.onMouseDown = { [weak self] in
             self?.selectOtherOption()
         }
         customField.translatesAutoresizingMaskIntoConstraints = false
@@ -91,6 +123,10 @@ final class QuestionView: NSStackView, NSTextFieldDelegate {
         return option.label
     }
 
+    var hasKeyboardConfirmedAnswer: Bool {
+        answerInputSource == .keyboard && selectedAnswer != nil
+    }
+
     func focusFirstInvalidControl() {
         guard let selectedIndex else {
             window?.makeFirstResponder(optionButtons.first)
@@ -102,23 +138,38 @@ final class QuestionView: NSStackView, NSTextFieldDelegate {
         }
     }
 
+    func activateShortcut(at index: Int) {
+        if isOther(question.options[index]) {
+            beginKeyboardOtherSelection(at: index)
+            return
+        }
+
+        selectOption(at: index, inputSource: .keyboard)
+        onKeyboardAnswerConfirmed?()
+    }
+
+    func isEditingCustomField() -> Bool {
+        guard let editor = customField.currentEditor() else {
+            return false
+        }
+        return window?.firstResponder === editor
+    }
+
     @objc
     private func selectionChanged(_ sender: NSButton) {
         guard let index = optionButtons.firstIndex(of: sender) else {
             return
         }
 
-        selectOption(at: index)
+        selectOption(at: index, inputSource: .mouse)
     }
 
-    private var selectedIndex: Int? {
-        optionButtons.firstIndex(where: { $0.state == .on })
-    }
-
-    private func selectOption(at index: Int) {
-        for (buttonIndex, button) in optionButtons.enumerated() {
-            button.state = buttonIndex == index ? .on : .off
-        }
+    private func selectOption(at index: Int, inputSource: AnswerInputSource?) {
+        selectedIndex = index
+        answerInputSource = inputSource
+        pendingKeyboardOtherConfirmation = false
+        refreshSelectionUI()
+        onAnswerStateChanged?()
     }
 
     func controlTextDidBeginEditing(_ obj: Notification) {
@@ -126,7 +177,12 @@ final class QuestionView: NSStackView, NSTextFieldDelegate {
             return
         }
 
-        selectOption(at: otherIndex)
+        selectedIndex = otherIndex
+        if !pendingKeyboardOtherConfirmation {
+            answerInputSource = .mouse
+        }
+        refreshSelectionUI()
+        onAnswerStateChanged?()
         _ = obj
     }
 
@@ -135,8 +191,30 @@ final class QuestionView: NSStackView, NSTextFieldDelegate {
             return
         }
 
-        selectOption(at: otherIndex)
+        selectedIndex = otherIndex
+        if !pendingKeyboardOtherConfirmation {
+            answerInputSource = .mouse
+        }
+        refreshSelectionUI()
+        onAnswerStateChanged?()
         _ = obj
+    }
+
+    func control(
+        _ control: NSControl,
+        textView: NSTextView,
+        doCommandBy commandSelector: Selector
+    ) -> Bool {
+        guard
+            control === customField,
+            commandSelector == #selector(NSResponder.insertNewline(_:))
+        else {
+            return false
+        }
+
+        confirmCustomFieldSelection()
+        _ = textView
+        return true
     }
 
     private var otherOptionIndex: Int? {
@@ -148,7 +226,37 @@ final class QuestionView: NSStackView, NSTextFieldDelegate {
             return
         }
 
-        selectOption(at: otherIndex)
+        selectOption(at: otherIndex, inputSource: .mouse)
+    }
+
+    private func beginKeyboardOtherSelection(at index: Int) {
+        selectedIndex = index
+        answerInputSource = nil
+        pendingKeyboardOtherConfirmation = true
+        refreshSelectionUI()
+        onAnswerStateChanged?()
+        window?.makeFirstResponder(customField)
+    }
+
+    private func confirmCustomFieldSelection() {
+        if pendingKeyboardOtherConfirmation, selectedAnswer != nil {
+            answerInputSource = .keyboard
+        }
+
+        pendingKeyboardOtherConfirmation = false
+        onAnswerStateChanged?()
+        window?.endEditing(for: nil)
+        window?.makeFirstResponder(nil)
+
+        if answerInputSource == .keyboard, selectedAnswer != nil {
+            onKeyboardAnswerConfirmed?()
+        }
+    }
+
+    private func refreshSelectionUI() {
+        for (buttonIndex, button) in optionButtons.enumerated() {
+            button.state = buttonIndex == selectedIndex ? .on : .off
+        }
     }
 
     private func optionsView() -> NSView {
@@ -162,6 +270,7 @@ final class QuestionView: NSStackView, NSTextFieldDelegate {
             let button = NSButton(radioButtonWithTitle: "", target: self, action: #selector(selectionChanged))
             button.translatesAutoresizingMaskIntoConstraints = false
             optionButtons.append(button)
+            let shortcut = shortcuts[index]
 
             let rowStack = NSStackView()
             rowStack.orientation = .horizontal
@@ -173,13 +282,15 @@ final class QuestionView: NSStackView, NSTextFieldDelegate {
             rowStack.addArrangedSubview(button)
 
             if isOther(option) {
-                customField.placeholderString = option.description
+                customField.placeholderString = optionDescription(option.description, shortcut: shortcut)
                 rowStack.addArrangedSubview(customField)
                 NSLayoutConstraint.activate([
                     customField.widthAnchor.constraint(equalToConstant: 388),
                 ])
             } else {
-                let descriptionLabel = NSTextField(wrappingLabelWithString: option.description)
+                let descriptionLabel = NSTextField(
+                    wrappingLabelWithString: optionDescription(option.description, shortcut: shortcut)
+                )
                 descriptionLabel.maximumNumberOfLines = 0
                 descriptionLabel.textColor = .labelColor
                 descriptionLabel.font = .systemFont(ofSize: 12)
@@ -211,27 +322,39 @@ final class QuestionView: NSStackView, NSTextFieldDelegate {
             return
         }
 
-        selectOption(at: index)
+        selectOption(at: index, inputSource: .mouse)
     }
 
     private func isOther(_ option: PopupOption) -> Bool {
         option.label.trimmingCharacters(in: .whitespacesAndNewlines)
             .caseInsensitiveCompare(otherLabel) == .orderedSame
     }
+
+    private func optionDescription(_ description: String, shortcut: Character?) -> String {
+        guard let shortcut else {
+            return description
+        }
+
+        return "[\(shortcut)] \(description)"
+    }
 }
 
 final class PopupWindowController: NSWindowController, NSWindowDelegate {
     private let request: PopupInputRequest
     private let questionViews: [QuestionView]
+    private let shortcutAssignments: [[Character?]]
     private let errorLabel = NSTextField(wrappingLabelWithString: "")
     private var isClosingProgrammatically = false
     private(set) var response = PopupInputResponse.cancelled()
 
     init(request: PopupInputRequest) {
         self.request = request
-        self.questionViews = request.questions.map(QuestionView.init)
+        self.shortcutAssignments = Self.assignShortcuts(for: request)
+        self.questionViews = zip(request.questions, shortcutAssignments).map { question, shortcuts in
+            QuestionView(question: question, shortcuts: shortcuts)
+        }
 
-        let window = NSWindow(
+        let window = PopupWindow(
             contentRect: NSRect(x: 0, y: 0, width: 560, height: Self.windowHeight(for: request)),
             styleMask: [.titled, .closable],
             backing: .buffered,
@@ -242,6 +365,10 @@ final class PopupWindowController: NSWindowController, NSWindowDelegate {
         window.center()
         super.init(window: window)
         window.delegate = self
+        window.onShortcutKey = { [weak self] shortcut in
+            self?.handleShortcutKey(shortcut) ?? false
+        }
+        wireQuestionCallbacks()
         buildInterface()
     }
 
@@ -320,6 +447,46 @@ final class PopupWindowController: NSWindowController, NSWindowDelegate {
         window.close()
     }
 
+    private func wireQuestionCallbacks() {
+        for view in questionViews {
+            view.onAnswerStateChanged = { [weak self] in
+                self?.errorLabel.stringValue = ""
+            }
+            view.onKeyboardAnswerConfirmed = { [weak self] in
+                self?.errorLabel.stringValue = ""
+                self?.submitIfAllAnswersWereConfirmedByKeyboard()
+            }
+        }
+    }
+
+    private func handleShortcutKey(_ shortcut: Character) -> Bool {
+        guard !questionViews.contains(where: { $0.isEditingCustomField() }) else {
+            return false
+        }
+
+        for (questionIndex, shortcuts) in shortcutAssignments.enumerated() {
+            guard let optionIndex = shortcuts.firstIndex(where: { $0 == shortcut }) else {
+                continue
+            }
+
+            _ = questionViews[questionIndex].activateShortcut(at: optionIndex)
+            return true
+        }
+
+        return false
+    }
+
+    private func submitIfAllAnswersWereConfirmedByKeyboard() {
+        guard
+            questionViews.allSatisfy({ $0.selectedAnswer != nil }),
+            questionViews.allSatisfy(\.hasKeyboardConfirmedAnswer)
+        else {
+            return
+        }
+
+        submit(nil)
+    }
+
     private func buildInterface() {
         guard let contentView = window?.contentView else {
             return
@@ -378,6 +545,20 @@ final class PopupWindowController: NSWindowController, NSWindowDelegate {
         let questionCount = max(request.questions.count, 1)
         return CGFloat(min(220 + questionCount * 120, 640))
     }
+
+    private static func assignShortcuts(for request: PopupInputRequest) -> [[Character?]] {
+        var cursor = optionShortcutKeys.startIndex
+        return request.questions.map { question in
+            question.options.map { _ in
+                guard cursor < optionShortcutKeys.endIndex else {
+                    return nil
+                }
+
+                defer { cursor = optionShortcutKeys.index(after: cursor) }
+                return optionShortcutKeys[cursor]
+            }
+        }
+    }
 }
 
 enum PopupInputError: Error {
@@ -406,7 +587,7 @@ private func decodeRequest(from data: Data) throws -> PopupInputRequest {
     }
 }
 
-private func showPopup(for request: PopupInputRequest) -> PopupInputResponse {
+private func showPopup(for request: PopupInputRequest) throws -> PopupInputResponse {
     guard !request.questions.isEmpty else {
         return .cancelled()
     }
@@ -430,7 +611,7 @@ private func writeResponse(_ response: PopupInputResponse) throws {
 
 do {
     let request = try decodeRequest(from: FileHandle.standardInput.readDataToEndOfFile())
-    let response = showPopup(for: request)
+    let response = try showPopup(for: request)
     try writeResponse(response)
 } catch {
     fputs("\(error.localizedDescription)\n", stderr)

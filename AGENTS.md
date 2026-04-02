@@ -38,6 +38,8 @@
 - Keep GitHub release publication in CI on the `gh` CLI path instead of Node-based third-party release actions, so release jobs stay aligned with GitHub-hosted tooling and avoid deprecated Node runtime churn.
 - Keep popup input logic split by concern: shared request/response types stay under `src/input_popup/`, the macOS UI stays in the embedded Swift/AppKit helper built from `swift/input_popup/main.swift`, Rust owns helper extraction and subprocess orchestration, non-macOS targets return a clear unsupported error without linking GUI libraries, and CLI/MCP entrypoints should call the shared popup runner instead of duplicating dialog behavior.
 - Keep popup modal completion one-shot in the Swift helper: Submit/Cancel initiated closure must not be reclassified as a window-close cancellation, so successful selections always survive until JSON response encoding.
+- Keep popup selection explicit in the Swift helper: opening the dialog or initial focus changes must not preselect any answer, and `Other` should only become selected after an actual user click or text edit.
+- Keep popup keyboard selection deterministic in the Swift helper: assign dialog-wide `1-9a-z` shortcuts in display order until that shortcut set is exhausted, let plain shortcut keys work whenever no custom input is focused, treat Return inside `Other` as confirm-and-blur, and auto-submit only after every answer has been confirmed from keyboard input.
 - Keep remote OAuth split by concern: generic OAuth discovery and token storage should stay reusable under `src/remote/oauth.rs`, while unsupported hosted endpoints should be rejected earlier by shared config-level remote URL validation.
 
 # Packages
