@@ -10,9 +10,11 @@ use crate::types::{CachedTools, CachedToolsetRecord, ToolSnapshot};
 
 use super::cache::load_cached_toolsets_from_home;
 use super::tools::{
-    CALL_TOOL_IN_EXTERNAL_MCP_NAME, REQUEST_USER_INPUT_IN_POPUP_NAME, STDIO_HOST_REQUIRED_MESSAGE,
-    ToolCatalog, build_activate_tool_description, build_activate_tool_detail_result,
-    build_activate_tool_result, call_tool_in_external_mcp_definition, parse_tool_arguments_json,
+    ACTIVATE_ADDITIONAL_MCP_NAME, ACTIVATE_TOOL_IN_ADDITIONAL_MCP_NAME,
+    CALL_TOOL_IN_ADDITIONAL_MCP_NAME, REQUEST_USER_INPUT_IN_POPUP_NAME,
+    STDIO_HOST_REQUIRED_MESSAGE, ToolCatalog, build_activate_tool_description,
+    build_activate_tool_detail_result, build_activate_tool_result,
+    call_tool_in_additional_mcp_definition, parse_tool_arguments_json,
     request_user_input_in_popup_definition, resolve_toolset_name,
 };
 use super::validate_proxy_stdio_launch;
@@ -26,7 +28,7 @@ fn builds_tool_description_from_cached_summaries() {
 
     assert_eq!(
         build_activate_tool_description(&toolsets),
-        "available external MCP servers:\n\n- alpha: Use this when you need Alpha workflows.\n- beta: Use this for Beta tasks."
+        "Use this tool to inspect additional MCP servers. Available additional MCP servers:\n\n- alpha: Use this when you need Alpha workflows.\n- beta: Use this for Beta tasks."
     );
 }
 
@@ -286,7 +288,7 @@ fn rejects_non_object_arguments_json() {
 
 #[test]
 fn call_tool_definition_contains_expected_fields() {
-    let tool = call_tool_in_external_mcp_definition(CALL_TOOL_IN_EXTERNAL_MCP_NAME);
+    let tool = call_tool_in_additional_mcp_definition(CALL_TOOL_IN_ADDITIONAL_MCP_NAME);
     let properties = tool
         .input_schema
         .get("properties")
@@ -346,8 +348,8 @@ fn tool_catalog_exposes_popup_input_tool_when_enabled() {
 #[test]
 fn activate_proxy_tools_are_marked_read_only() {
     let catalog = ToolCatalog::new(&[], false);
-    let activate_tool = catalog.get("activate_external_mcp").unwrap();
-    let activate_tool_detail = catalog.get("activate_external_mcp_tool").unwrap();
+    let activate_tool = catalog.get(ACTIVATE_ADDITIONAL_MCP_NAME).unwrap();
+    let activate_tool_detail = catalog.get(ACTIVATE_TOOL_IN_ADDITIONAL_MCP_NAME).unwrap();
 
     assert_eq!(
         activate_tool.annotations,

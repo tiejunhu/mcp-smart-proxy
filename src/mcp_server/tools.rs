@@ -9,25 +9,25 @@ use crate::input_popup::popup_input_schema;
 use crate::paths::sanitize_name;
 use crate::types::{CachedToolsetRecord, ToolSnapshot};
 
-pub(super) const ACTIVATE_EXTERNAL_MCP_NAME: &str = "activate_external_mcp";
-pub(super) const ACTIVATE_EXTERNAL_MCP_TOOL_NAME: &str = "activate_external_mcp_tool";
-pub(super) const CALL_TOOL_IN_EXTERNAL_MCP_NAME: &str = "call_tool_in_external_mcp";
+pub(super) const ACTIVATE_ADDITIONAL_MCP_NAME: &str = "activate_additional_mcp";
+pub(super) const ACTIVATE_TOOL_IN_ADDITIONAL_MCP_NAME: &str = "activate_tool_in_additional_mcp";
+pub(super) const CALL_TOOL_IN_ADDITIONAL_MCP_NAME: &str = "call_tool_in_additional_mcp";
 pub(super) const REQUEST_USER_INPUT_IN_POPUP_NAME: &str = "request_user_input_in_popup";
 pub(super) const STDIO_HOST_REQUIRED_MESSAGE: &str = "`msp mcp` is a stdio MCP server and must be started by an MCP client such as Codex, OpenCode, or Claude Code instead of running directly in a terminal";
 
 #[derive(Debug, Deserialize)]
-pub(super) struct ActivateExternalMcpRequest {
+pub(super) struct ActivateAdditionalMcpRequest {
     pub(super) external_mcp_name: String,
 }
 
 #[derive(Debug, Deserialize)]
-pub(super) struct ActivateExternalMcpToolRequest {
+pub(super) struct ActivateToolInAdditionalMcpRequest {
     pub(super) external_mcp_name: String,
     pub(super) tool_name: String,
 }
 
 #[derive(Debug, Deserialize)]
-pub(super) struct CallToolInExternalMcpRequest {
+pub(super) struct CallToolInAdditionalMcpRequest {
     pub(super) external_mcp_name: String,
     pub(super) tool_name: String,
     pub(super) args_in_json: String,
@@ -37,7 +37,7 @@ pub(super) struct CallToolInExternalMcpRequest {
 pub(super) struct ToolCatalog {
     activate_tool: Tool,
     activate_tool_detail: Tool,
-    call_tool_in_external_mcp: Tool,
+    call_tool_in_additional_mcp: Tool,
     request_user_input_in_popup: Option<Tool>,
 }
 
@@ -45,9 +45,9 @@ impl ToolCatalog {
     pub(super) fn new(toolsets: &[CachedToolsetRecord], enable_input: bool) -> Self {
         Self {
             activate_tool: activate_tool_definition(toolsets),
-            activate_tool_detail: activate_external_mcp_tool_definition(),
-            call_tool_in_external_mcp: call_tool_in_external_mcp_definition(
-                CALL_TOOL_IN_EXTERNAL_MCP_NAME,
+            activate_tool_detail: activate_tool_in_additional_mcp_definition(),
+            call_tool_in_additional_mcp: call_tool_in_additional_mcp_definition(
+                CALL_TOOL_IN_ADDITIONAL_MCP_NAME,
             ),
             request_user_input_in_popup: enable_input.then(request_user_input_in_popup_definition),
         }
@@ -57,7 +57,7 @@ impl ToolCatalog {
         let mut tools = vec![
             self.activate_tool.clone(),
             self.activate_tool_detail.clone(),
-            self.call_tool_in_external_mcp.clone(),
+            self.call_tool_in_additional_mcp.clone(),
         ];
         if let Some(tool) = &self.request_user_input_in_popup {
             tools.push(tool.clone());
@@ -67,9 +67,9 @@ impl ToolCatalog {
 
     pub(super) fn get(&self, name: &str) -> Option<Tool> {
         match name {
-            ACTIVATE_EXTERNAL_MCP_NAME => Some(self.activate_tool.clone()),
-            ACTIVATE_EXTERNAL_MCP_TOOL_NAME => Some(self.activate_tool_detail.clone()),
-            CALL_TOOL_IN_EXTERNAL_MCP_NAME => Some(self.call_tool_in_external_mcp.clone()),
+            ACTIVATE_ADDITIONAL_MCP_NAME => Some(self.activate_tool.clone()),
+            ACTIVATE_TOOL_IN_ADDITIONAL_MCP_NAME => Some(self.activate_tool_detail.clone()),
+            CALL_TOOL_IN_ADDITIONAL_MCP_NAME => Some(self.call_tool_in_additional_mcp.clone()),
             REQUEST_USER_INPUT_IN_POPUP_NAME => self.request_user_input_in_popup.clone(),
             _ => None,
         }
@@ -77,7 +77,11 @@ impl ToolCatalog {
 }
 
 pub(super) fn build_activate_tool_description(toolsets: &[CachedToolsetRecord]) -> String {
-    let mut lines = vec!["available external MCP servers:".to_string(), String::new()];
+    let mut lines = vec![
+        "Use this tool to activate additional MCP servers. The following additional MCP servers are available to be activated when you need some tools to complete the user request:"
+            .to_string(),
+        String::new(),
+    ];
     if toolsets.is_empty() {
         lines.push(
             "- none: no cached external MCP servers available yet; run `mcp-smart-proxy reload <name>` first."
@@ -93,10 +97,10 @@ pub(super) fn build_activate_tool_description(toolsets: &[CachedToolsetRecord]) 
     lines.join("\n")
 }
 
-pub(super) fn call_tool_in_external_mcp_definition(name: &'static str) -> Tool {
+pub(super) fn call_tool_in_additional_mcp_definition(name: &'static str) -> Tool {
     Tool::new(
         name,
-        "Call a specific tool exposed by an external MCP server",
+        "Call a specific tool exposed by an additional MCP server",
         object(json!({
             "type": "object",
             "properties": {
@@ -122,7 +126,7 @@ pub(super) fn call_tool_in_external_mcp_definition(name: &'static str) -> Tool {
 pub(super) fn request_user_input_in_popup_definition() -> Tool {
     Tool::new(
         REQUEST_USER_INPUT_IN_POPUP_NAME,
-        "Request user input through a popup",
+        "Request user input through a popup. When you need to ask the user for input on some question and don't have other tools, use this one.",
         object(popup_input_schema()),
     )
 }
@@ -220,14 +224,14 @@ pub(super) fn resolve_tool_snapshot_or_error<'a>(
 
 fn activate_tool_definition(toolsets: &[CachedToolsetRecord]) -> Tool {
     Tool::new(
-        ACTIVATE_EXTERNAL_MCP_NAME,
+        ACTIVATE_ADDITIONAL_MCP_NAME,
         build_activate_tool_description(toolsets),
         object(json!({
             "type": "object",
             "properties": {
                 "external_mcp_name": {
                     "type": "string",
-                    "description": "The external MCP server name to activate."
+                    "description": "The MCP server name to activate."
                 }
             },
             "required": ["external_mcp_name"],
@@ -237,10 +241,10 @@ fn activate_tool_definition(toolsets: &[CachedToolsetRecord]) -> Tool {
     .with_annotations(read_only_annotations())
 }
 
-fn activate_external_mcp_tool_definition() -> Tool {
+fn activate_tool_in_additional_mcp_definition() -> Tool {
     Tool::new(
-        ACTIVATE_EXTERNAL_MCP_TOOL_NAME,
-        "Return the full definition of one tool exposed by an external MCP server, use this tool before calling call_tool_in_external_mcp",
+        ACTIVATE_TOOL_IN_ADDITIONAL_MCP_NAME,
+        "Return the full definition of one tool exposed by an additional MCP server, use this tool before calling call_tool_in_additional_mcp",
         object(json!({
             "type": "object",
             "properties": {

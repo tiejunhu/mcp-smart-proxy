@@ -16,8 +16,9 @@ use crate::input_popup::{PopupInputRequest, request_user_input_in_popup};
 use crate::types::CachedToolsetRecord;
 
 use super::tools::{
-    ACTIVATE_EXTERNAL_MCP_NAME, ACTIVATE_EXTERNAL_MCP_TOOL_NAME, ActivateExternalMcpRequest,
-    ActivateExternalMcpToolRequest, CALL_TOOL_IN_EXTERNAL_MCP_NAME, CallToolInExternalMcpRequest,
+    ACTIVATE_ADDITIONAL_MCP_NAME, ACTIVATE_TOOL_IN_ADDITIONAL_MCP_NAME,
+    ActivateAdditionalMcpRequest, ActivateToolInAdditionalMcpRequest,
+    CALL_TOOL_IN_ADDITIONAL_MCP_NAME, CallToolInAdditionalMcpRequest,
     REQUEST_USER_INPUT_IN_POPUP_NAME, ToolCatalog, build_activate_tool_detail_result,
     build_activate_tool_result, parse_tool_arguments_json, parse_tool_request,
     resolve_tool_snapshot_or_error, resolve_toolset_or_error,
@@ -49,8 +50,8 @@ impl SmartProxyMcpServer {
         &self,
         arguments: JsonMap<String, JsonValue>,
     ) -> Result<CallToolResult, McpError> {
-        let params: ActivateExternalMcpRequest =
-            parse_tool_request(ACTIVATE_EXTERNAL_MCP_NAME, arguments)?;
+        let params: ActivateAdditionalMcpRequest =
+            parse_tool_request(ACTIVATE_ADDITIONAL_MCP_NAME, arguments)?;
         let toolset = resolve_toolset_or_error(&self.toolsets, &params.external_mcp_name)?;
         Ok(build_activate_tool_result(toolset))
     }
@@ -59,8 +60,8 @@ impl SmartProxyMcpServer {
         &self,
         arguments: JsonMap<String, JsonValue>,
     ) -> Result<CallToolResult, McpError> {
-        let params: ActivateExternalMcpToolRequest =
-            parse_tool_request(ACTIVATE_EXTERNAL_MCP_TOOL_NAME, arguments)?;
+        let params: ActivateToolInAdditionalMcpRequest =
+            parse_tool_request(ACTIVATE_TOOL_IN_ADDITIONAL_MCP_NAME, arguments)?;
         let toolset = resolve_toolset_or_error(&self.toolsets, &params.external_mcp_name)?;
         let tool = resolve_tool_snapshot_or_error(toolset, &params.tool_name)?;
         Ok(build_activate_tool_detail_result(tool))
@@ -70,8 +71,8 @@ impl SmartProxyMcpServer {
         &self,
         arguments: JsonMap<String, JsonValue>,
     ) -> Result<CallToolResult, McpError> {
-        let params: CallToolInExternalMcpRequest =
-            parse_tool_request(CALL_TOOL_IN_EXTERNAL_MCP_NAME, arguments)?;
+        let params: CallToolInAdditionalMcpRequest =
+            parse_tool_request(CALL_TOOL_IN_ADDITIONAL_MCP_NAME, arguments)?;
         let toolset = resolve_toolset_or_error(&self.toolsets, &params.external_mcp_name)?;
         let arguments = parse_tool_arguments_json(&params.args_in_json)?;
 
@@ -120,9 +121,9 @@ impl ServerHandler for SmartProxyMcpServer {
     fn get_info(&self) -> ServerInfo {
         let mut info = ServerInfo::default();
         let instructions = if self.input_enabled {
-            "Use `activate_external_mcp` to inspect cached tool names, `activate_external_mcp_tool` to inspect one full cached tool definition, `call_tool_in_external_mcp` to invoke a specific downstream MCP tool, and `request_user_input_in_popup` when you need a focused popup choice from the user."
+            "Use `activate_additional_mcp` to inspect cached tool names, `activate_tool_in_additional_mcp` to inspect one full cached tool definition, `call_tool_in_additional_mcp` to invoke a specific downstream MCP tool, and `request_user_input_in_popup` when you need a focused popup choice from the user."
         } else {
-            "Use `activate_external_mcp` to inspect cached tool names, `activate_external_mcp_tool` to inspect one full cached tool definition, and `call_tool_in_external_mcp` to invoke a specific downstream MCP tool."
+            "Use `activate_additional_mcp` to inspect cached tool names, `activate_tool_in_additional_mcp` to inspect one full cached tool definition, and `call_tool_in_additional_mcp` to invoke a specific downstream MCP tool."
         };
         info.instructions = Some(instructions.into());
         info.capabilities = ServerCapabilities::builder().enable_tools().build();
@@ -154,9 +155,9 @@ impl ServerHandler for SmartProxyMcpServer {
             .ok_or_else(|| McpError::invalid_params("tool arguments are required", None))?;
 
         match request.name.as_ref() {
-            ACTIVATE_EXTERNAL_MCP_NAME => self.call_activate_tool(arguments).await,
-            ACTIVATE_EXTERNAL_MCP_TOOL_NAME => self.call_activate_tool_detail(arguments).await,
-            CALL_TOOL_IN_EXTERNAL_MCP_NAME => self.call_external_tool(arguments).await,
+            ACTIVATE_ADDITIONAL_MCP_NAME => self.call_activate_tool(arguments).await,
+            ACTIVATE_TOOL_IN_ADDITIONAL_MCP_NAME => self.call_activate_tool_detail(arguments).await,
+            CALL_TOOL_IN_ADDITIONAL_MCP_NAME => self.call_external_tool(arguments).await,
             REQUEST_USER_INPUT_IN_POPUP_NAME => {
                 self.call_request_user_input_in_popup(arguments).await
             }

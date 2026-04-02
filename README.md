@@ -20,9 +20,9 @@ The installed binary name is `msp`. Running `msp` without arguments shows the to
 1. Connects to each configured MCP server and caches its tool metadata.
 2. Generates a short summary for each server by using a configured provider: `codex`, `opencode`, or `claude`.
 3. Starts a stdio MCP proxy that exposes these proxy tools:
-   - `activate_external_mcp`
-   - `activate_external_mcp_tool`
-   - `call_tool_in_external_mcp`
+   - `activate_additional_mcp`
+   - `activate_tool_in_additional_mcp`
+   - `call_tool_in_additional_mcp`
    - `request_user_input_in_popup` when started with `msp mcp --enable-input`
 
 Agents first inspect the cached server index, optionally inspect one tool definition, and then call the downstream tool through the proxy.
@@ -236,7 +236,7 @@ Open a sample popup dialog locally:
 msp input test
 ```
 
-The MCP tool `request_user_input_in_popup` is exposed only when the host starts `msp mcp --enable-input`. On macOS it uses an embedded Swift/AppKit helper, presents questions in grouped cards with larger click targets, keeps a short header that explains the interaction model, sizes the window to its content up to a maximum height of 800 points, scrolls only the content area when that limit is exceeded, always appends a final `Other` option, assigns dialog-wide `1-9a-z` shortcuts in display order until the shortcut set is exhausted, lets plain shortcut keys select options while no custom field is focused, confirms `Other` with Return, returns one answer per question, and returns an empty `answers` object when the user cancels or closes the dialog.
+The MCP tool `request_user_input_in_popup` is exposed only when the host starts `msp mcp --enable-input`. On macOS it uses an embedded Swift/AppKit helper, presents questions in grouped cards with larger click targets, keeps a short header that explains the interaction model, sizes the window to its content up to a maximum height of 800 points, scrolls only the content area when that limit is exceeded, unlocks one question at a time, starts each active question with a 10-second countdown, automatically selects the first option when that countdown expires without user interaction, always appends a final `Other` option, assigns dialog-wide `1-9a-z` shortcuts in display order until the shortcut set is exhausted, lets plain shortcut keys select options for the current question while no custom field is focused, confirms `Other` with Return, returns one answer per question, and returns an empty `answers` object when the user cancels or closes the dialog.
 
 The released `msp` binary still ships as a single executable. On macOS, `msp` extracts the embedded popup helper into `~/.cache/mcp-smart-proxy/popup-input/` on first use and reuses it for later dialogs.
 
@@ -466,7 +466,7 @@ Background self-update requires write access to the installed `msp` binary path.
 
 ## Proxy Tool Contract
 
-### `activate_external_mcp`
+### `activate_additional_mcp`
 
 Input:
 
@@ -485,7 +485,7 @@ another_tool: Another description that is longer but still fits in the preview
 
 Each output line is `tool_name: description-preview`. If a tool has no description, the line is just `tool_name`.
 
-### `activate_external_mcp_tool`
+### `activate_tool_in_additional_mcp`
 
 Input:
 
@@ -509,7 +509,7 @@ Output:
 }
 ```
 
-### `call_tool_in_external_mcp`
+### `call_tool_in_additional_mcp`
 
 Input:
 
