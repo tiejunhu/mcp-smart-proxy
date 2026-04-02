@@ -3,6 +3,7 @@ import Foundation
 
 private let otherLabel = "Other"
 private let optionShortcutKeys = Array("123456789abcdefghijklmnopqrstuvwxyz")
+private let optionShortcutKeySet = Set(optionShortcutKeys)
 
 struct PopupInputRequest: Decodable {
     let questions: [PopupQuestion]
@@ -86,7 +87,8 @@ final class PopupWindow: NSWindow {
             event.modifierFlags.intersection(disallowedModifiers).isEmpty,
             let character = event.charactersIgnoringModifiers?.lowercased(),
             character.count == 1,
-            let shortcut = character.first
+            let shortcut = character.first,
+            optionShortcutKeySet.contains(shortcut)
         else {
             return super.performKeyEquivalent(with: event)
         }
@@ -615,7 +617,8 @@ final class QuestionView: NSStackView, NSTextFieldDelegate {
 final class PopupWindowController: NSWindowController, NSWindowDelegate {
     private static let windowWidth: CGFloat = 620
     private static let maxWindowHeight: CGFloat = 800
-    private static let questionTimeoutSeconds = 10
+    private static let questionTimeoutSeconds = 30
+    private static let modalPanelRunLoopMode = RunLoop.Mode("NSModalPanelRunLoopMode")
     private static let topInset: CGFloat = 18
     private static let sideInset: CGFloat = 20
     private static let bottomInset: CGFloat = 18
@@ -627,11 +630,14 @@ final class PopupWindowController: NSWindowController, NSWindowDelegate {
     private let progressLabel = NSTextField(wrappingLabelWithString: "")
     private let countdownLabel = NSTextField(wrappingLabelWithString: "")
     private let errorLabel = NSTextField(wrappingLabelWithString: "")
+    private let stopTimerButton = NSButton(title: "Turn Off Auto-Select", target: nil, action: nil)
+    private let submitButton = NSButton(title: "Continue", target: nil, action: nil)
     private weak var contentScrollView: NSScrollView?
     private weak var contentStack: NSStackView?
     private weak var actionsView: NSView?
     private var contentScrollHeightConstraint: NSLayoutConstraint?
     private var isClosingProgrammatically = false
+    private var isCountdownPermanentlyStopped = false
     private var activeQuestionIndex = 0
     private var questionTimer: Timer?
     private var remainingQuestionSeconds = 10
@@ -681,8 +687,8 @@ final class PopupWindowController: NSWindowController, NSWindowDelegate {
         let startFrame = hiddenStartFrame(for: targetFrame, window: window)
         window.setFrame(startFrame, display: false)
         window.makeKeyAndOrderFront(nil)
-        window.makeFirstResponder(nil)
         activateQuestion(at: 0, startCountdown: true)
+        focusStopTimerButtonIfNeeded()
 
         NSAnimationContext.runAnimationGroup { context in
             context.duration = 0.22
@@ -771,6 +777,7 @@ final class PopupWindowController: NSWindowController, NSWindowDelegate {
         for (index, view) in questionViews.enumerated() {
             view.onAnswerStateChanged = { [weak self] in
                 self?.setValidationMessage(nil)
+                self?.updateSubmitButtonState()
             }
             view.onInteraction = { [weak self] in
                 self?.handleQuestionInteraction(at: index)
@@ -851,6 +858,7 @@ final class PopupWindowController: NSWindowController, NSWindowDelegate {
         header.setContentHuggingPriority(.required, for: .vertical)
         header.setContentCompressionResistancePriority(.required, for: .vertical)
         contentStack.addArrangedSubview(header)
+        header.widthAnchor.constraint(equalTo: contentStack.widthAnchor).isActive = true
         contentStack.setCustomSpacing(16, after: header)
 
         for view in questionViews {
@@ -920,9 +928,6 @@ final class PopupWindowController: NSWindowController, NSWindowDelegate {
         stack.spacing = 3
         stack.translatesAutoresizingMaskIntoConstraints = false
 
-        let titleLabel = NSTextField(labelWithString: "Answer one question at a time")
-        titleLabel.font = .systemFont(ofSize: 18, weight: .semibold)
-
         progressLabel.font = .systemFont(ofSize: 15, weight: .semibold)
         progressLabel.textColor = .labelColor
         progressLabel.maximumNumberOfLines = 1
@@ -931,24 +936,44 @@ final class PopupWindowController: NSWindowController, NSWindowDelegate {
         countdownLabel.font = .systemFont(ofSize: 14)
         countdownLabel.textColor = .secondaryLabelColor
         countdownLabel.maximumNumberOfLines = 0
+        countdownLabel.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        countdownLabel.setContentCompressionResistancePriority(.defaultHigh, for: .horizontal)
         countdownLabel.translatesAutoresizingMaskIntoConstraints = false
 
-        let shortcutHelpLabel = NSTextField(
-            wrappingLabelWithString:
-                "Shortcuts 1-9 and A-Z apply to the current question when a custom field is not focused. Press Return in Other to confirm and continue."
-        )
-        shortcutHelpLabel.font = .systemFont(ofSize: 12)
-        shortcutHelpLabel.textColor = .secondaryLabelColor
-        shortcutHelpLabel.maximumNumberOfLines = 0
-        shortcutHelpLabel.translatesAutoresizingMaskIntoConstraints = false
+        stopTimerButton.target = self
+        stopTimerButton.action = #selector(turnOffAutoSelect(_:))
+        stopTimerButton.controlSize = .small
+        stopTimerButton.bezelStyle = .rounded
+        stopTimerButton.setContentHuggingPriority(.required, for: .horizontal)
+        stopTimerButton.setContentCompressionResistancePriority(.required, for: .horizontal)
+        stopTimerButton.translatesAutoresizingMaskIntoConstraints = false
 
-        stack.addArrangedSubview(titleLabel)
+        let countdownRow = NSStackView()
+        countdownRow.orientation = .horizontal
+        countdownRow.alignment = .firstBaseline
+        countdownRow.spacing = 10
+        countdownRow.translatesAutoresizingMaskIntoConstraints = false
+
+        let countdownSpacer = NSView()
+        countdownSpacer.translatesAutoresizingMaskIntoConstraints = false
+        countdownSpacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        countdownSpacer.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+
+        let trailingInset = NSView()
+        trailingInset.translatesAutoresizingMaskIntoConstraints = false
+        trailingInset.setContentHuggingPriority(.required, for: .horizontal)
+        trailingInset.setContentCompressionResistancePriority(.required, for: .horizontal)
+        trailingInset.widthAnchor.constraint(equalToConstant: 6).isActive = true
+
+        countdownRow.addArrangedSubview(countdownLabel)
+        countdownRow.addArrangedSubview(countdownSpacer)
+        countdownRow.addArrangedSubview(stopTimerButton)
+        countdownRow.addArrangedSubview(trailingInset)
+
         stack.addArrangedSubview(progressLabel)
-        stack.addArrangedSubview(countdownLabel)
-        stack.addArrangedSubview(shortcutHelpLabel)
+        stack.addArrangedSubview(countdownRow)
         progressLabel.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
-        countdownLabel.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
-        shortcutHelpLabel.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+        countdownRow.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
 
         return stack
     }
@@ -966,15 +991,32 @@ final class PopupWindowController: NSWindowController, NSWindowDelegate {
         spacer.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
         let cancelButton = NSButton(title: "Cancel", target: self, action: #selector(cancel))
-        let submitButton = NSButton(title: "Submit", target: self, action: #selector(submit))
         cancelButton.keyEquivalent = "\u{1b}"
+        submitButton.target = self
+        submitButton.action = #selector(submit)
         submitButton.keyEquivalent = "\r"
+        updateSubmitButtonState()
 
         buttons.addArrangedSubview(spacer)
         buttons.addArrangedSubview(cancelButton)
         buttons.addArrangedSubview(submitButton)
 
         return buttons
+    }
+
+    private func updateSubmitButtonState() {
+        submitButton.isEnabled = questionViews.allSatisfy { $0.selectedAnswer != nil }
+    }
+
+    private func focusStopTimerButtonIfNeeded() {
+        guard
+            let window,
+            !isCountdownPermanentlyStopped
+        else {
+            return
+        }
+
+        window.makeFirstResponder(stopTimerButton)
     }
 
     private func setValidationMessage(_ message: String?) {
@@ -1046,15 +1088,23 @@ final class PopupWindowController: NSWindowController, NSWindowDelegate {
     }
 
     private func startQuestionTimer() {
+        guard !isCountdownPermanentlyStopped else {
+            invalidateQuestionTimer()
+            remainingQuestionSeconds = Self.questionTimeoutSeconds
+            updateStatusLabel()
+            return
+        }
+
         invalidateQuestionTimer()
         remainingQuestionSeconds = Self.questionTimeoutSeconds
-        updateStatusLabel()
 
         let timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
             self?.tickQuestionTimer()
         }
         RunLoop.main.add(timer, forMode: .common)
+        RunLoop.main.add(timer, forMode: Self.modalPanelRunLoopMode)
         questionTimer = timer
+        updateStatusLabel()
     }
 
     private func tickQuestionTimer() {
@@ -1090,6 +1140,19 @@ final class PopupWindowController: NSWindowController, NSWindowDelegate {
         handleAnswerCommitted(at: activeQuestionIndex)
     }
 
+    private func stopCountdownPermanently() {
+        isCountdownPermanentlyStopped = true
+        invalidateQuestionTimer()
+        updateStatusLabel()
+    }
+
+    @objc
+    private func turnOffAutoSelect(_ sender: Any?) {
+        window?.makeFirstResponder(nil)
+        stopCountdownPermanently()
+        _ = sender
+    }
+
     private func invalidateQuestionTimer() {
         questionTimer?.invalidate()
         questionTimer = nil
@@ -1105,9 +1168,17 @@ final class PopupWindowController: NSWindowController, NSWindowDelegate {
         let questionNumber = activeQuestionIndex + 1
         let totalQuestions = questionViews.count
         progressLabel.stringValue = "Question \(questionNumber) of \(totalQuestions)"
+        stopTimerButton.isHidden = isCountdownPermanentlyStopped
+        stopTimerButton.isEnabled = !isCountdownPermanentlyStopped
         if questionTimer != nil {
             countdownLabel.stringValue =
                 "Auto-selects the first option in \(remainingQuestionSeconds) seconds unless you interact."
+            return
+        }
+
+        if isCountdownPermanentlyStopped {
+            countdownLabel.stringValue =
+                "Timer disabled for the rest of this dialog. Confirm this answer to continue."
             return
         }
 
