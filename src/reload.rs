@@ -1,19 +1,22 @@
 use std::error::Error;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use rmcp::model::Tool;
 mod summarizer;
+use tokio::time::timeout;
 
 use crate::config::{configured_server, load_config_table};
 use crate::console::{
-    ExternalOutputCapture, operation_error, print_external_command_failure_with_captured_stderr,
+    ExternalOutputCapture, describe_command, operation_error, print_external_command_failure,
+    print_external_command_failure_with_captured_stderr,
 };
 use crate::downstream_client::connect_stdio_client;
 use crate::fs_util::{FileLockGuard, acquire_sibling_lock, write_file_atomically};
-use crate::paths::{
-    cache_file_path, format_path_for_display, sanitize_name, sibling_lock_path, unix_epoch_ms,
-};
+#[cfg(test)]
+use crate::paths::sibling_lock_path;
+use crate::paths::{cache_file_path, format_path_for_display, sanitize_name, unix_epoch_ms};
 use crate::reload::summarizer::summarize_tools;
 use crate::remote::connect_remote_client;
 use crate::types::{
@@ -25,6 +28,14 @@ pub struct ReloadResult {
     pub cache_path: PathBuf,
     pub updated: bool,
 }
+
+const RELOAD_LOCK_ACQUIRE_TIMEOUT: Duration = Duration::from_secs(10);
+const RELOAD_STDLIO_CONNECT_TIMEOUT: Duration = Duration::from_secs(20);
+const RELOAD_LIST_TOOLS_TIMEOUT: Duration = Duration::from_secs(30);
+const RELOAD_CLIENT_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
+const RELOAD_REMOTE_CONNECT_TIMEOUT: Duration = Duration::from_secs(20);
+const RELOAD_REMOTE_LIST_TOOLS_TIMEOUT: Duration = Duration::from_secs(30);
+const RELOAD_REMOTE_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
 
 pub async fn reload_server_with_provider(
     config_path: &Path,
@@ -52,13 +63,7 @@ async fn reload_server_with_resolved_provider(
         })?)
     };
     let _reload_lock = match &lock_cache_path {
-        Some(cache_path) => Some(acquire_reload_lock(cache_path).map_err(|error| {
-            operation_error(
-                "reload.lock",
-                format!("failed to acquire refresh lock for `{normalized_name}`"),
-                error,
-            )
-        })?),
+        Some(cache_path) => Some(acquire_reload_lock_async(cache_path, &normalized_name).await?),
         None => None,
     };
     let config = load_config_table(config_path).map_err(|error| {
@@ -162,20 +167,41 @@ async fn fetch_tools(
 ) -> Result<Vec<Tool>, Box<dyn Error>> {
     match &server.transport {
         ConfiguredTransport::Stdio { command, args } => {
-            let client = connect_stdio_client(
-                "reload.fetch_tools",
-                "reload.fetch_tools.spawn",
-                "reload.fetch_tools.connect",
-                server_name.to_string(),
-                command,
-                args,
-                server.resolved_env(),
+            let command_line = describe_command(command, args);
+            let client = timeout(
+                RELOAD_STDLIO_CONNECT_TIMEOUT,
+                connect_stdio_client(
+                    "reload.fetch_tools",
+                    "reload.fetch_tools.spawn",
+                    "reload.fetch_tools.connect",
+                    server_name.to_string(),
+                    command,
+                    args,
+                    server.resolved_env(),
+                ),
             )
-            .await?;
+            .await
+            .map_err(|_| {
+                print_external_command_failure(
+                    "reload.fetch_tools",
+                    server_name,
+                    &command_line,
+                    "connect-timeout",
+                );
+                operation_error(
+                    "reload.fetch_tools.connect_timeout",
+                    format!(
+                        "timed out while initializing an MCP client against external command `{command_line}`"
+                    ),
+                    "stdio MCP connection timed out".into(),
+                )
+            })??;
             let stderr_capture = client.stderr.start_capture().await;
-            let tools = match client.service.list_all_tools().await {
-                Ok(tools) => tools,
-                Err(error) => {
+            let tools = match timeout(RELOAD_LIST_TOOLS_TIMEOUT, client.service.list_all_tools())
+                .await
+            {
+                Ok(Ok(tools)) => tools,
+                Ok(Err(error)) => {
                     print_external_command_failure_async(
                         "reload.fetch_tools",
                         &client.label,
@@ -193,57 +219,161 @@ async fn fetch_tools(
                         Box::new(error),
                     ));
                 }
+                Err(_) => {
+                    print_external_command_failure_async(
+                        "reload.fetch_tools",
+                        &client.label,
+                        &client.command_line,
+                        "list-tools-timeout",
+                        stderr_capture,
+                    )
+                    .await;
+                    let _ = timeout(RELOAD_CLIENT_SHUTDOWN_TIMEOUT, client.service.cancel()).await;
+                    return Err(operation_error(
+                        "reload.fetch_tools.list_tools_timeout",
+                        format!(
+                            "timed out while listing tools from external command `{}`",
+                            client.command_line
+                        ),
+                        "tool discovery timed out".into(),
+                    ));
+                }
             };
-            if let Err(error) = client.service.cancel().await {
-                print_external_command_failure_async(
-                    "reload.fetch_tools",
-                    &client.label,
-                    &client.command_line,
-                    "shutdown-failed",
-                    stderr_capture,
-                )
-                .await;
-                return Err(operation_error(
-                    "reload.fetch_tools.shutdown",
-                    format!(
-                        "failed to shut down MCP client for `{}`",
-                        client.command_line
-                    ),
-                    Box::new(error),
-                ));
+            match timeout(RELOAD_CLIENT_SHUTDOWN_TIMEOUT, client.service.cancel()).await {
+                Ok(Ok(_)) => {}
+                Ok(Err(error)) => {
+                    print_external_command_failure_async(
+                        "reload.fetch_tools",
+                        &client.label,
+                        &client.command_line,
+                        "shutdown-failed",
+                        stderr_capture,
+                    )
+                    .await;
+                    return Err(operation_error(
+                        "reload.fetch_tools.shutdown",
+                        format!(
+                            "failed to shut down MCP client for `{}`",
+                            client.command_line
+                        ),
+                        Box::new(error),
+                    ));
+                }
+                Err(_) => {
+                    print_external_command_failure_async(
+                        "reload.fetch_tools",
+                        &client.label,
+                        &client.command_line,
+                        "shutdown-timeout",
+                        stderr_capture,
+                    )
+                    .await;
+                    return Err(operation_error(
+                        "reload.fetch_tools.shutdown_timeout",
+                        format!(
+                            "timed out while shutting down MCP client for `{}`",
+                            client.command_line
+                        ),
+                        "MCP client shutdown timed out".into(),
+                    ));
+                }
             }
             let _ = stderr_capture.finish().await;
             Ok(tools)
         }
         ConfiguredTransport::Remote { url, .. } => {
-            let client = connect_remote_client(server_name, server)
+            let client = timeout(
+                RELOAD_REMOTE_CONNECT_TIMEOUT,
+                connect_remote_client(server_name, server),
+            )
+            .await
+            .map_err(|_| {
+                operation_error(
+                    "reload.fetch_tools.connect_remote_timeout",
+                    format!(
+                        "timed out while initializing an MCP client against remote endpoint `{url}`"
+                    ),
+                    "remote MCP connection timed out".into(),
+                )
+            })?
+            .map_err(|error| {
+                operation_error(
+                    "reload.fetch_tools.connect_remote",
+                    format!("failed to initialize an MCP client against remote endpoint `{url}`"),
+                    error,
+                )
+            })?;
+            let tools = timeout(RELOAD_REMOTE_LIST_TOOLS_TIMEOUT, client.list_all_tools())
                 .await
+                .map_err(|_| {
+                    operation_error(
+                        "reload.fetch_tools.list_remote_tools_timeout",
+                        format!("timed out while listing tools from remote endpoint `{url}`"),
+                        "remote tool discovery timed out".into(),
+                    )
+                })?
                 .map_err(|error| {
                     operation_error(
-                        "reload.fetch_tools.connect_remote",
-                        format!(
-                            "failed to initialize an MCP client against remote endpoint `{url}`"
-                        ),
-                        error,
+                        "reload.fetch_tools.list_remote_tools",
+                        format!("failed to list tools from remote endpoint `{url}`"),
+                        Box::new(error),
                     )
                 })?;
-            let tools = client.list_all_tools().await.map_err(|error| {
-                operation_error(
-                    "reload.fetch_tools.list_remote_tools",
-                    format!("failed to list tools from remote endpoint `{url}`"),
-                    Box::new(error),
-                )
-            })?;
-            client.cancel().await.map_err(|error| {
-                operation_error(
-                    "reload.fetch_tools.shutdown_remote",
-                    format!("failed to shut down MCP client for remote endpoint `{url}`"),
-                    Box::new(error),
-                )
-            })?;
+            timeout(RELOAD_REMOTE_SHUTDOWN_TIMEOUT, client.cancel())
+                .await
+                .map_err(|_| {
+                    operation_error(
+                        "reload.fetch_tools.shutdown_remote_timeout",
+                        format!(
+                            "timed out while shutting down MCP client for remote endpoint `{url}`"
+                        ),
+                        "remote MCP shutdown timed out".into(),
+                    )
+                })?
+                .map_err(|error| {
+                    operation_error(
+                        "reload.fetch_tools.shutdown_remote",
+                        format!("failed to shut down MCP client for remote endpoint `{url}`"),
+                        Box::new(error),
+                    )
+                })?;
             Ok(tools)
         }
     }
+}
+
+async fn acquire_reload_lock_async(
+    cache_path: &Path,
+    normalized_name: &str,
+) -> Result<FileLockGuard, Box<dyn Error>> {
+    let cache_path = cache_path.to_path_buf();
+    let normalized_name = normalized_name.to_string();
+    timeout(
+        RELOAD_LOCK_ACQUIRE_TIMEOUT,
+        tokio::task::spawn_blocking(move || acquire_sibling_lock(&cache_path)),
+    )
+    .await
+    .map_err(|_| {
+        operation_error(
+            "reload.lock_timeout",
+            format!("timed out while waiting for the refresh lock for `{normalized_name}`"),
+            "cache lock acquisition timed out".into(),
+        )
+    })?
+    .map_err(|error| {
+        operation_error(
+            "reload.lock_join",
+            format!("failed while waiting for the refresh lock for `{normalized_name}`"),
+            Box::new(error),
+        )
+    })?
+    .map_err(|error| {
+        operation_error(
+            "reload.lock",
+            format!("failed to acquire refresh lock for `{normalized_name}`"),
+            Box::new(error),
+        )
+    })
 }
 
 async fn print_external_command_failure_async(
@@ -319,6 +449,7 @@ fn serialize_tool_snapshots(tools: &[ToolSnapshot]) -> Result<String, Box<dyn Er
     })
 }
 
+#[cfg(test)]
 fn acquire_reload_lock(cache_path: &Path) -> Result<FileLockGuard, Box<dyn Error>> {
     acquire_sibling_lock(cache_path).map_err(|error| {
         let lock_path = sibling_lock_path(cache_path);

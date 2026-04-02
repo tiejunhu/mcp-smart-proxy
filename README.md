@@ -322,7 +322,11 @@ Keep custom socket paths short enough for Unix domain socket limits.
 
 The daemon writes a runtime log next to its socket, for example `~/.cache/mcp-smart-proxy/msp-<scope>.sock.log`.
 
-If the daemon socket accepts a connection but never replies, `msp daemon status`, `stop`, and `restart` fail quickly with a clear "daemon is unresponsive" error that points to the daemon log file instead of hanging indefinitely.
+Detached daemon startup also writes `~/.cache/mcp-smart-proxy/msp-<scope>.sock.startup.log` until the new daemon answers a status probe. If startup fails or the new daemon becomes unresponsive before it can serve status, that startup log is kept for diagnosis.
+
+If the daemon socket accepts a connection but never replies, `msp daemon status`, `stop`, and `restart` fail quickly instead of hanging indefinitely. `stop` and `restart` also fall back to force-stopping the unresponsive daemon by pid-file state so the socket can recover without manual cleanup.
+
+Concurrent daemon refresh requests for the same provider are coalesced into one shared reload. Slow cache-lock waits, MCP tool discovery, and summary subprocesses also fail with timeouts instead of blocking the daemon forever.
 
 ## Install Into a Host
 

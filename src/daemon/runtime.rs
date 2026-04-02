@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::error::Error;
+use std::future::Future;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -41,6 +42,7 @@ pub(crate) async fn serve_daemon(
         socket_path,
         logger,
         registry: ClientRegistry::default(),
+        load_toolsets: LoadToolsetsCoordinator::default(),
         next_request_id: AtomicU64::new(1),
         active_requests: AtomicUsize::new(0),
         last_activity: StdMutex::new(Instant::now()),
@@ -109,6 +111,7 @@ struct DaemonState {
     socket_path: PathBuf,
     logger: DaemonLogger,
     registry: ClientRegistry,
+    load_toolsets: LoadToolsetsCoordinator,
     next_request_id: AtomicU64,
     active_requests: AtomicUsize,
     last_activity: StdMutex<Instant>,
@@ -198,7 +201,15 @@ async fn handle_connection_inner(
             DaemonResponse::ExitAck
         }
         DaemonRequest::LoadToolsets { provider } => {
-            match load_toolsets_for_provider(&state.config_path, &provider).await {
+            match state
+                .load_toolsets
+                .run(&provider, || {
+                    let config_path = state.config_path.clone();
+                    let provider = provider.clone();
+                    async move { load_toolsets_for_provider(&config_path, &provider).await }
+                })
+                .await
+            {
                 Ok(toolsets) => DaemonResponse::Toolsets { toolsets },
                 Err(error) => DaemonResponse::Error {
                     message: error.to_string(),
@@ -342,6 +353,56 @@ impl ClientRegistry {
     }
 }
 
+type SharedLoadToolsetsResult = Result<Vec<CachedToolsetRecord>, String>;
+
+#[derive(Default)]
+struct LoadToolsetsCoordinator {
+    slots: Mutex<HashMap<String, watch::Sender<Option<SharedLoadToolsetsResult>>>>,
+}
+
+impl LoadToolsetsCoordinator {
+    async fn run<F, Fut>(
+        &self,
+        provider_name: &str,
+        operation: F,
+    ) -> Result<Vec<CachedToolsetRecord>, Box<dyn Error>>
+    where
+        F: FnOnce() -> Fut,
+        Fut: Future<Output = Result<Vec<CachedToolsetRecord>, Box<dyn Error>>>,
+    {
+        let (mut receiver, is_leader) = {
+            let mut slots = self.slots.lock().await;
+            if let Some(sender) = slots.get(provider_name) {
+                (sender.subscribe(), false)
+            } else {
+                let (sender, receiver) = watch::channel(None);
+                slots.insert(provider_name.to_string(), sender);
+                (receiver, true)
+            }
+        };
+
+        if is_leader {
+            let result = operation().await.map_err(|error| error.to_string());
+            if let Some(sender) = self.slots.lock().await.remove(provider_name) {
+                let _ = sender.send(Some(result.clone()));
+            }
+            return result.map_err(Into::into);
+        }
+
+        loop {
+            if let Some(result) = receiver.borrow().clone() {
+                return result.map_err(Into::into);
+            }
+
+            receiver.changed().await.map_err(|_| {
+                format!(
+                    "shared load_toolsets refresh ended unexpectedly for provider `{provider_name}`"
+                )
+            })?;
+        }
+    }
+}
+
 async fn connect_toolset_client(
     server_name: &str,
     server: &ConfiguredServer,
@@ -381,9 +442,11 @@ async fn connect_toolset_client(
 }
 
 async fn shutdown_signal() -> io::Result<()> {
+    let mut hangup = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::hangup())?;
     let mut terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
     tokio::select! {
         result = tokio::signal::ctrl_c() => result,
+        _ = hangup.recv() => Ok(()),
         _ = terminate.recv() => Ok(()),
     }
 }
@@ -404,5 +467,60 @@ fn daemon_response_name(response: &DaemonResponse) -> &'static str {
         DaemonResponse::Toolsets { .. } => "toolsets",
         DaemonResponse::ToolResult { .. } => "tool_result",
         DaemonResponse::Error { .. } => "error",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use tokio::time::sleep;
+
+    fn sample_toolsets() -> Vec<CachedToolsetRecord> {
+        vec![CachedToolsetRecord {
+            name: "demo".to_string(),
+            summary: "Use demo.".to_string(),
+            tools: Vec::new(),
+        }]
+    }
+
+    #[tokio::test]
+    async fn load_toolsets_coordinator_deduplicates_concurrent_refreshes() {
+        let coordinator = LoadToolsetsCoordinator::default();
+        let runs = Arc::new(AtomicUsize::new(0));
+
+        let first_runs = Arc::clone(&runs);
+        let first = coordinator.run("codex", move || async move {
+            first_runs.fetch_add(1, Ordering::SeqCst);
+            sleep(Duration::from_millis(50)).await;
+            Ok(sample_toolsets())
+        });
+
+        let second_runs = Arc::clone(&runs);
+        let second = coordinator.run("codex", move || async move {
+            second_runs.fetch_add(1, Ordering::SeqCst);
+            Ok(sample_toolsets())
+        });
+
+        let (first_result, second_result) = tokio::join!(first, second);
+
+        assert_eq!(first_result.unwrap()[0].name, "demo");
+        assert_eq!(second_result.unwrap()[0].name, "demo");
+        assert_eq!(runs.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn load_toolsets_coordinator_shares_refresh_errors() {
+        let coordinator = LoadToolsetsCoordinator::default();
+        let first = coordinator.run("codex", || async {
+            sleep(Duration::from_millis(50)).await;
+            Err("refresh failed".into())
+        });
+        let second = coordinator.run("codex", || async { Ok(sample_toolsets()) });
+
+        let (first_error, second_error) = tokio::join!(first, second);
+
+        assert_eq!(first_error.unwrap_err().to_string(), "refresh failed");
+        assert_eq!(second_error.unwrap_err().to_string(), "refresh failed");
     }
 }

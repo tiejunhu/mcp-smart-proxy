@@ -2,10 +2,13 @@ use std::env;
 use std::error::Error;
 use std::fs;
 use std::path::PathBuf;
+use std::process::ExitStatus;
 use std::process::Stdio;
+use std::time::Duration;
 
 use rmcp::model::Tool;
-use tokio::io::AsyncWriteExt;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::time::timeout;
 
 use crate::console::{
     describe_command, message_error, operation_error, print_external_command_failure,
@@ -31,6 +34,8 @@ pub(crate) async fn summarize_tools(
         ModelProviderConfig::Claude(claude) => summarize_tools_with_claude(claude, &prompt).await,
     }
 }
+
+const SUMMARY_COMMAND_TIMEOUT: Duration = Duration::from_secs(30);
 
 fn build_summary_prompt(server_name: &str, tools: &[Tool]) -> Result<String, Box<dyn Error>> {
     let mut lines = vec![
@@ -126,26 +131,25 @@ async fn summarize_tools_with_codex(
     })?;
     drop(stdin);
 
-    let output = child.wait_with_output().await.map_err(|error| {
-        print_external_command_failure(
-            "reload.summarize_tools.codex",
-            "codex",
-            &command_line,
-            "wait-failed",
-        );
-        operation_error(
-            "reload.summarize_tools.codex.wait",
-            format!("failed while waiting for external command `{command_line}`"),
-            Box::new(error),
-        )
-    })?;
+    let output = wait_for_child_output(
+        &mut child,
+        "reload.summarize_tools.codex",
+        "reload.summarize_tools.codex.wait",
+        "reload.summarize_tools.codex.timeout",
+        "codex",
+        &command_line,
+    )
+    .await?;
     if !output.status.success() {
         print_external_command_failure_with_output(
             "reload.summarize_tools.codex",
             "codex",
             &command_line,
             &output.status.to_string(),
-            &[("stderr", String::from_utf8_lossy(&output.stderr).as_ref())],
+            &[
+                ("stdout", String::from_utf8_lossy(&output.stdout).as_ref()),
+                ("stderr", String::from_utf8_lossy(&output.stderr).as_ref()),
+            ],
         );
         cleanup_summary_paths(Some(&output_path), Some(&workdir));
         return Err(message_error(
@@ -206,28 +210,29 @@ async fn summarize_tools_with_opencode(
     ];
     let command_line = describe_command("opencode", &command_args);
 
-    let output = tokio::process::Command::new("opencode")
+    let mut child = tokio::process::Command::new("opencode")
         .current_dir(&workdir)
         .env("NO_COLOR", "1")
         .args(&command_args)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .output()
-        .await
+        .spawn()
         .map_err(|error| {
-            print_external_command_failure(
-                "reload.summarize_tools.opencode",
-                "opencode",
-                &command_line,
-                "wait-failed",
-            );
-            cleanup_summary_paths(None, Some(&workdir));
             operation_error(
-                "reload.summarize_tools.opencode.wait",
-                format!("failed while waiting for external command `{command_line}`"),
+                "reload.summarize_tools.opencode.spawn",
+                format!("failed to start external command `{command_line}`"),
                 Box::new(error),
             )
         })?;
+    let output = wait_for_child_output(
+        &mut child,
+        "reload.summarize_tools.opencode",
+        "reload.summarize_tools.opencode.wait",
+        "reload.summarize_tools.opencode.timeout",
+        "opencode",
+        &command_line,
+    )
+    .await?;
 
     if !output.status.success() {
         let stdout = String::from_utf8_lossy(&output.stdout);
@@ -289,28 +294,29 @@ async fn summarize_tools_with_claude(
     ];
     let command_line = describe_command("claude", &command_args);
 
-    let output = tokio::process::Command::new("claude")
+    let mut child = tokio::process::Command::new("claude")
         .current_dir(&workdir)
         .env("NO_COLOR", "1")
         .args(&command_args)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .output()
-        .await
+        .spawn()
         .map_err(|error| {
-            print_external_command_failure(
-                "reload.summarize_tools.claude",
-                "claude",
-                &command_line,
-                "wait-failed",
-            );
-            cleanup_summary_paths(None, Some(&workdir));
             operation_error(
-                "reload.summarize_tools.claude.wait",
-                format!("failed while waiting for external command `{command_line}`"),
+                "reload.summarize_tools.claude.spawn",
+                format!("failed to start external command `{command_line}`"),
                 Box::new(error),
             )
         })?;
+    let output = wait_for_child_output(
+        &mut child,
+        "reload.summarize_tools.claude",
+        "reload.summarize_tools.claude.wait",
+        "reload.summarize_tools.claude.timeout",
+        "claude",
+        &command_line,
+    )
+    .await?;
 
     if !output.status.success() {
         let stdout = String::from_utf8_lossy(&output.stdout);
@@ -379,6 +385,76 @@ pub(crate) fn claude_workdir_path() -> Result<PathBuf, Box<dyn Error>> {
         std::process::id(),
         unix_epoch_ms()?
     )))
+}
+
+struct SummaryCommandOutput {
+    status: ExitStatus,
+    stdout: Vec<u8>,
+    stderr: Vec<u8>,
+}
+
+async fn wait_for_child_output(
+    child: &mut tokio::process::Child,
+    stage: &str,
+    wait_stage: &'static str,
+    timeout_stage: &'static str,
+    label: &str,
+    command_line: &str,
+) -> Result<SummaryCommandOutput, Box<dyn Error>> {
+    let stdout = child.stdout.take();
+    let stderr = child.stderr.take();
+    let stdout_task = tokio::spawn(async move { read_stream_to_end(stdout).await });
+    let stderr_task = tokio::spawn(async move { read_stream_to_end(stderr).await });
+
+    let status = match timeout(SUMMARY_COMMAND_TIMEOUT, child.wait()).await {
+        Ok(Ok(status)) => status,
+        Ok(Err(error)) => {
+            print_external_command_failure(stage, label, command_line, "wait-failed");
+            return Err(operation_error(
+                wait_stage,
+                format!("failed while waiting for external command `{command_line}`"),
+                Box::new(error),
+            ));
+        }
+        Err(_) => {
+            let _ = child.kill().await;
+            let stdout = join_output(stdout_task).await;
+            let stderr = join_output(stderr_task).await;
+            print_external_command_failure_with_output(
+                stage,
+                label,
+                command_line,
+                "timed-out",
+                &[
+                    ("stdout", String::from_utf8_lossy(&stdout).as_ref()),
+                    ("stderr", String::from_utf8_lossy(&stderr).as_ref()),
+                ],
+            );
+            return Err(message_error(
+                timeout_stage,
+                format!("external command `{command_line}` timed out while summarizing tools"),
+            ));
+        }
+    };
+
+    Ok(SummaryCommandOutput {
+        status,
+        stdout: join_output(stdout_task).await,
+        stderr: join_output(stderr_task).await,
+    })
+}
+
+async fn read_stream_to_end(stream: Option<impl tokio::io::AsyncRead + Unpin>) -> Vec<u8> {
+    let Some(mut stream) = stream else {
+        return Vec::new();
+    };
+    let mut buffer = Vec::new();
+    let _ = stream.read_to_end(&mut buffer).await;
+    buffer
+}
+
+async fn join_output(task: tokio::task::JoinHandle<Vec<u8>>) -> Vec<u8> {
+    task.await.unwrap_or_default()
 }
 
 pub(crate) fn non_empty_summary(
