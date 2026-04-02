@@ -25,6 +25,8 @@ pub struct Cli {
 pub enum Command {
     /// Add a managed MCP server to the local config.
     Add {
+        #[arg(long, value_enum)]
+        provider: ProviderName,
         name: String,
         #[arg(required = true, num_args = 1.., trailing_var_arg = true, allow_hyphen_values = true)]
         command: Vec<String>,
@@ -221,6 +223,8 @@ mod tests {
         let cli = Cli::parse_from([
             "msp",
             "add",
+            "--provider",
+            "codex",
             "github",
             "npx",
             "-y",
@@ -228,7 +232,12 @@ mod tests {
         ]);
 
         match cli.command {
-            Some(Command::Add { name, command }) => {
+            Some(Command::Add {
+                provider,
+                name,
+                command,
+            }) => {
+                assert!(matches!(provider, ProviderName::Codex));
                 assert_eq!(name, "github");
                 assert_eq!(
                     command,
@@ -244,11 +253,10 @@ mod tests {
     }
 
     #[test]
-    fn rejects_add_provider_flag() {
-        let error = Cli::try_parse_from(["msp", "add", "--provider", "codex", "github", "npx"])
-            .unwrap_err();
+    fn rejects_add_without_provider_flag() {
+        let error = Cli::try_parse_from(["msp", "add", "github", "npx"]).unwrap_err();
 
-        assert_eq!(error.kind(), ErrorKind::UnknownArgument);
+        assert_eq!(error.kind(), ErrorKind::MissingRequiredArgument);
     }
 
     #[test]

@@ -92,7 +92,7 @@ msp restore codex
 To add a new server after that:
 
 ```bash
-msp add github npx -y @modelcontextprotocol/server-github
+msp add --provider codex github npx -y @modelcontextprotocol/server-github
 ```
 
 ### Fastest path for OpenCode or Claude Code
@@ -130,7 +130,7 @@ msp restore claude
 Add a server:
 
 ```bash
-msp add github npx -y @modelcontextprotocol/server-github
+msp add --provider codex github npx -y @modelcontextprotocol/server-github
 ```
 
 Install `msp` into your host:
@@ -156,16 +156,16 @@ msp daemon restart
 ### Add a server
 
 ```bash
-msp add github npx -y @modelcontextprotocol/server-github
+msp add --provider codex github npx -y @modelcontextprotocol/server-github
 ```
 
 If the command is a single `http://` or `https://` URL, `msp` stores it as a native remote server:
 
 ```bash
-msp add remote-demo https://example.com/mcp
+msp add --provider codex remote-demo https://example.com/mcp
 ```
 
-`add` only writes the server config. Refresh cached tools later with `msp reload --provider ...`, or let the shared `msp mcp --provider ...` daemon refresh all enabled servers during startup.
+`add` requires `--provider` so `msp` can summarize the fetched tools immediately. The command succeeds only when both config persistence and the initial cache refresh succeed; if cache generation fails, `msp` rolls back the new server entry instead of leaving partial config behind. You can still refresh later with `msp reload --provider ...`, or let the shared `msp mcp --provider ...` daemon refresh enabled servers in the background after startup.
 
 ### List servers
 
@@ -264,12 +264,12 @@ OAuth metadata is discovered from the remote MCP server at runtime. Credentials 
 
 `msp` does not support Figma's hosted MCP endpoint at `https://mcp.figma.com/mcp`.
 
-The proxy rejects that URL during `msp add`, `msp config --url`, and local config load with a clear error instead of letting setup continue into a broken OAuth flow.
+The proxy rejects that URL during `msp add --provider ...`, `msp config --url`, and local config load with a clear error instead of letting setup continue into a broken OAuth flow.
 
 During `msp import ...` and `msp install ... --replace`, Figma hosted MCP entries are skipped for import and left in the original host config instead of being deleted.
 
 ```bash
-msp add figma https://mcp.figma.com/mcp
+msp add --provider codex figma https://mcp.figma.com/mcp
 ```
 
 Expected result:
@@ -451,7 +451,7 @@ msp mcp --provider codex
 
 `msp mcp` is a stdio MCP server entrypoint, not an interactive shell command. Start it from an MCP host such as Codex, OpenCode, or Claude Code, or install it with `msp install ...`.
 
-Before the proxy starts, `msp mcp --provider ...` reloads every enabled configured server with the selected summary provider. If any reload fails, the proxy does not report ready upstream.
+When the proxy starts, `msp mcp --provider ...` serves the currently cached toolsets immediately and asks the shared daemon to refresh every enabled configured server in the background with the selected summary provider. The current stdio session keeps using the startup cache snapshot; refreshed cache is used by later sessions or explicit reloads. Background refresh failures are logged by the daemon and do not block MCP readiness.
 
 ## Background Self-Update
 

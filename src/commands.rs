@@ -63,7 +63,11 @@ pub async fn run() -> Result<(), Box<dyn Error>> {
     })?;
 
     match cli.command {
-        Some(Command::Add { name, command }) => run_add_command(&config_path, &name, command)?,
+        Some(Command::Add {
+            provider,
+            name,
+            command,
+        }) => run_add_command(&config_path, provider, &name, command).await?,
         Some(Command::List) => run_list_command(&config_path)?,
         Some(Command::Enable { name }) => run_set_enabled_command(&config_path, &name, true)?,
         Some(Command::Disable { name }) => run_set_enabled_command(&config_path, &name, false)?,
@@ -196,11 +200,19 @@ async fn run_daemon_command(
     }
 }
 
-fn run_add_command(
+async fn run_add_command(
     config_path: &Path,
+    provider: ProviderName,
     name: &str,
     command: Vec<String>,
 ) -> Result<(), Box<dyn Error>> {
+    let resolved_provider = resolve_default_command_provider(Some(provider)).map_err(|error| {
+        operation_error(
+            "cli.add.load_provider",
+            format!("failed to resolve the summary provider before adding `{name}`"),
+            error,
+        )
+    })?;
     let server_name = add_server(config_path, name, command).map_err(|error| {
         operation_error(
             "cli.add",
@@ -211,12 +223,51 @@ fn run_add_command(
             error,
         )
     })?;
+    let reload_result = match reload_server_with_provider(
+        config_path,
+        &server_name,
+        &resolved_provider,
+    )
+    .await
+    {
+        Ok(result) => result,
+        Err(error) => {
+            remove_server(config_path, &server_name).map_err(|rollback_error| {
+                    operation_error(
+                        "cli.add.rollback",
+                        format!(
+                            "failed to roll back MCP server `{server_name}` in {} after cache generation failed: original cache error: {}",
+                            format_path_for_display(config_path),
+                            error
+                        ),
+                        rollback_error,
+                    )
+                })?;
+            return Err(operation_error(
+                "cli.add.reload",
+                format!(
+                    "failed to populate the initial cache for MCP server `{server_name}`; rolled back the config change in {}",
+                    format_path_for_display(config_path)
+                ),
+                error,
+            ));
+        }
+    };
     print_app_event(
         "cli.add",
-        format!(
-            "Added MCP server `{server_name}` to {}; cached tools will refresh on `msp reload --provider ...` or `msp mcp --provider ...`",
-            format_path_for_display(config_path),
-        ),
+        if reload_result.updated {
+            format!(
+                "Added MCP server `{server_name}` to {} and cached its tools at {}",
+                format_path_for_display(config_path),
+                format_path_for_display(&reload_result.cache_path)
+            )
+        } else {
+            format!(
+                "Added MCP server `{server_name}` to {} and reused matching cached tools at {}",
+                format_path_for_display(config_path),
+                format_path_for_display(&reload_result.cache_path)
+            )
+        },
     );
     Ok(())
 }
@@ -571,6 +622,21 @@ fn format_local_timestamp(epoch_ms: u128) -> Option<String> {
 mod tests {
     use super::provider::missing_provider_error;
     use super::*;
+    use crate::paths::{cache_file_path, sibling_lock_path};
+    use std::fs;
+    use std::path::PathBuf;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn unique_test_path(name: &str) -> PathBuf {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        std::env::temp_dir().join(format!(
+            "mcp-smart-proxy-commands-{name}-{}-{nonce}",
+            std::process::id()
+        ))
+    }
 
     #[test]
     fn formats_missing_last_updated_as_never() {
@@ -630,5 +696,42 @@ mod tests {
         let provider = resolve_install_import_provider(ImportSource::Claude).unwrap();
 
         assert!(matches!(provider, ModelProviderConfig::Claude(_)));
+    }
+
+    #[test]
+    fn add_rolls_back_config_when_initial_cache_generation_fails() {
+        let config_path = unique_test_path("add-rollback.toml");
+        let server_name = format!(
+            "broken-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        );
+        let cache_path = cache_file_path(&server_name).unwrap();
+        let error = tokio::runtime::Runtime::new()
+            .unwrap()
+            .block_on(run_add_command(
+                &config_path,
+                ProviderName::Codex,
+                &server_name,
+                vec!["definitely-not-a-real-mcp-command".to_string()],
+            ))
+            .unwrap_err();
+
+        assert!(
+            error
+                .to_string()
+                .contains(&format!(
+                    "failed to populate the initial cache for MCP server `{server_name}`; rolled back the config change"
+                ))
+        );
+
+        let config = load_config_table(&config_path).unwrap();
+        assert!(config.get("servers").is_none());
+        assert!(!cache_path.exists());
+
+        fs::remove_file(config_path).unwrap();
+        let _ = fs::remove_file(sibling_lock_path(&cache_path));
     }
 }

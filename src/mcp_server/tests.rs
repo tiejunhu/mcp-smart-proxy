@@ -28,7 +28,7 @@ fn builds_tool_description_from_cached_summaries() {
 
     assert_eq!(
         build_activate_tool_description(&toolsets),
-        "Use this tool to inspect additional MCP servers. Available additional MCP servers:\n\n- alpha: Use this when you need Alpha workflows.\n- beta: Use this for Beta tasks."
+        "Use this tool to activate additional MCP servers. The following additional MCP servers are available to be activated when you need some tools to complete the user request:\n\n- alpha: Use this when you need Alpha workflows.\n- beta: Use this for Beta tasks."
     );
 }
 

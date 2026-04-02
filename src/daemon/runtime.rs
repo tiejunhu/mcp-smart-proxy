@@ -1,6 +1,6 @@
 use std::collections::HashMap;
+use std::collections::HashSet;
 use std::error::Error;
-use std::future::Future;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -42,7 +42,7 @@ pub(crate) async fn serve_daemon(
         socket_path,
         logger,
         registry: ClientRegistry::default(),
-        load_toolsets: LoadToolsetsCoordinator::default(),
+        refresh_toolsets: RefreshToolsetsCoordinator::default(),
         next_request_id: AtomicU64::new(1),
         active_requests: AtomicUsize::new(0),
         last_activity: StdMutex::new(Instant::now()),
@@ -111,7 +111,7 @@ struct DaemonState {
     socket_path: PathBuf,
     logger: DaemonLogger,
     registry: ClientRegistry,
-    load_toolsets: LoadToolsetsCoordinator,
+    refresh_toolsets: RefreshToolsetsCoordinator,
     next_request_id: AtomicU64,
     active_requests: AtomicUsize,
     last_activity: StdMutex<Instant>,
@@ -201,19 +201,23 @@ async fn handle_connection_inner(
             DaemonResponse::ExitAck
         }
         DaemonRequest::LoadToolsets { provider } => {
-            match state
-                .load_toolsets
-                .run(&provider, || {
-                    let config_path = state.config_path.clone();
-                    let provider = provider.clone();
-                    async move { load_toolsets_for_provider(&config_path, &provider).await }
-                })
-                .await
+            match load_cached_toolsets_snapshot(&state.config_path)
+                .map_err(|error| error.to_string())
             {
-                Ok(toolsets) => DaemonResponse::Toolsets { toolsets },
-                Err(error) => DaemonResponse::Error {
-                    message: error.to_string(),
-                },
+                Ok(toolsets) => {
+                    state
+                        .refresh_toolsets
+                        .spawn(&provider, state.logger.clone(), {
+                            let config_path = state.config_path.clone();
+                            let provider = provider.clone();
+                            move || async move {
+                                refresh_toolsets_for_provider(&config_path, &provider).await
+                            }
+                        })
+                        .await;
+                    DaemonResponse::Toolsets { toolsets }
+                }
+                Err(message) => DaemonResponse::Error { message },
             }
         }
         DaemonRequest::CallTool {
@@ -242,16 +246,9 @@ async fn handle_connection_inner(
     Ok(())
 }
 
-async fn load_toolsets_for_provider(
+fn load_cached_toolsets_snapshot(
     config_path: &Path,
-    provider_name: &str,
 ) -> Result<Vec<CachedToolsetRecord>, Box<dyn Error>> {
-    let provider = load_model_provider_config(provider_name)?;
-    let servers = list_servers(config_path)?;
-    for server in servers.into_iter().filter(|server| server.enabled) {
-        reload_server_with_provider(config_path, &server.name, &provider).await?;
-    }
-
     let config = load_config_table(config_path)?;
     Ok(load_cached_toolsets(&config)?
         .into_iter()
@@ -261,6 +258,19 @@ async fn load_toolsets_for_provider(
             tools: toolset.tools,
         })
         .collect())
+}
+
+async fn refresh_toolsets_for_provider(
+    config_path: &Path,
+    provider_name: &str,
+) -> Result<(), Box<dyn Error>> {
+    let provider = load_model_provider_config(provider_name)?;
+    let servers = list_servers(config_path)?;
+    for server in servers.into_iter().filter(|server| server.enabled) {
+        reload_server_with_provider(config_path, &server.name, &provider).await?;
+    }
+
+    Ok(())
 }
 
 async fn call_tool_with_registry(
@@ -353,53 +363,48 @@ impl ClientRegistry {
     }
 }
 
-type SharedLoadToolsetsResult = Result<Vec<CachedToolsetRecord>, String>;
-
-#[derive(Default)]
-struct LoadToolsetsCoordinator {
-    slots: Mutex<HashMap<String, watch::Sender<Option<SharedLoadToolsetsResult>>>>,
+#[derive(Clone, Default)]
+struct RefreshToolsetsCoordinator {
+    slots: Arc<Mutex<HashSet<String>>>,
 }
 
-impl LoadToolsetsCoordinator {
-    async fn run<F, Fut>(
-        &self,
-        provider_name: &str,
-        operation: F,
-    ) -> Result<Vec<CachedToolsetRecord>, Box<dyn Error>>
+impl RefreshToolsetsCoordinator {
+    async fn spawn<F, Fut>(&self, provider_name: &str, logger: DaemonLogger, operation: F)
     where
-        F: FnOnce() -> Fut,
-        Fut: Future<Output = Result<Vec<CachedToolsetRecord>, Box<dyn Error>>>,
+        F: FnOnce() -> Fut + Send + 'static,
+        Fut: Future<Output = Result<(), Box<dyn Error>>> + Send + 'static,
     {
-        let (mut receiver, is_leader) = {
+        let provider_name = provider_name.to_string();
+        {
             let mut slots = self.slots.lock().await;
-            if let Some(sender) = slots.get(provider_name) {
-                (sender.subscribe(), false)
-            } else {
-                let (sender, receiver) = watch::channel(None);
-                slots.insert(provider_name.to_string(), sender);
-                (receiver, true)
+            if !slots.insert(provider_name.clone()) {
+                logger.info(
+                    "daemon.refresh_skipped",
+                    format!("provider={provider_name} reason=already_running"),
+                );
+                return;
             }
-        };
-
-        if is_leader {
-            let result = operation().await.map_err(|error| error.to_string());
-            if let Some(sender) = self.slots.lock().await.remove(provider_name) {
-                let _ = sender.send(Some(result.clone()));
-            }
-            return result.map_err(Into::into);
         }
 
-        loop {
-            if let Some(result) = receiver.borrow().clone() {
-                return result.map_err(Into::into);
+        logger.info(
+            "daemon.refresh_started",
+            format!("provider={provider_name}"),
+        );
+        let slots = Arc::clone(&self.slots);
+        tokio::spawn(async move {
+            let failure = operation().await.err().map(|error| error.to_string());
+            match failure {
+                None => logger.info(
+                    "daemon.refresh_finished",
+                    format!("provider={provider_name} status=ok"),
+                ),
+                Some(error) => logger.error(
+                    "daemon.refresh_failed",
+                    format!("provider={provider_name} error={error}"),
+                ),
             }
-
-            receiver.changed().await.map_err(|_| {
-                format!(
-                    "shared load_toolsets refresh ended unexpectedly for provider `{provider_name}`"
-                )
-            })?;
-        }
+            slots.lock().await.remove(&provider_name);
+        });
     }
 }
 
@@ -474,53 +479,76 @@ fn daemon_response_name(response: &DaemonResponse) -> &'static str {
 mod tests {
     use super::*;
     use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::time::{SystemTime, UNIX_EPOCH};
     use tokio::time::sleep;
 
-    fn sample_toolsets() -> Vec<CachedToolsetRecord> {
-        vec![CachedToolsetRecord {
-            name: "demo".to_string(),
-            summary: "Use demo.".to_string(),
-            tools: Vec::new(),
-        }]
-    }
-
     #[tokio::test]
-    async fn load_toolsets_coordinator_deduplicates_concurrent_refreshes() {
-        let coordinator = LoadToolsetsCoordinator::default();
+    async fn refresh_toolsets_coordinator_deduplicates_concurrent_refreshes() {
+        let coordinator = RefreshToolsetsCoordinator::default();
         let runs = Arc::new(AtomicUsize::new(0));
+        let release = Arc::new(tokio::sync::Notify::new());
+        let logger = test_logger("refresh-dedup");
 
         let first_runs = Arc::clone(&runs);
-        let first = coordinator.run("codex", move || async move {
-            first_runs.fetch_add(1, Ordering::SeqCst);
-            sleep(Duration::from_millis(50)).await;
-            Ok(sample_toolsets())
-        });
+        let first_release = Arc::clone(&release);
+        coordinator
+            .spawn("codex", logger.clone(), move || async move {
+                first_runs.fetch_add(1, Ordering::SeqCst);
+                first_release.notified().await;
+                Ok(())
+            })
+            .await;
 
         let second_runs = Arc::clone(&runs);
-        let second = coordinator.run("codex", move || async move {
-            second_runs.fetch_add(1, Ordering::SeqCst);
-            Ok(sample_toolsets())
-        });
+        coordinator
+            .spawn("codex", logger, move || async move {
+                second_runs.fetch_add(1, Ordering::SeqCst);
+                Ok(())
+            })
+            .await;
 
-        let (first_result, second_result) = tokio::join!(first, second);
-
-        assert_eq!(first_result.unwrap()[0].name, "demo");
-        assert_eq!(second_result.unwrap()[0].name, "demo");
+        sleep(Duration::from_millis(50)).await;
         assert_eq!(runs.load(Ordering::SeqCst), 1);
+        release.notify_waiters();
+        sleep(Duration::from_millis(50)).await;
     }
 
     #[tokio::test]
-    async fn load_toolsets_coordinator_shares_refresh_errors() {
-        let coordinator = LoadToolsetsCoordinator::default();
-        let first = coordinator.run("codex", || async {
-            sleep(Duration::from_millis(50)).await;
-            Err("refresh failed".into())
-        });
-        let second = coordinator.run("codex", || async { Ok(sample_toolsets()) });
+    async fn refresh_toolsets_coordinator_allows_retry_after_failure() {
+        let coordinator = RefreshToolsetsCoordinator::default();
+        let runs = Arc::new(AtomicUsize::new(0));
+        let logger = test_logger("refresh-retry");
 
-        let (first_error, second_error) = tokio::join!(first, second);
+        let first_runs = Arc::clone(&runs);
+        coordinator
+            .spawn("codex", logger.clone(), move || async move {
+                first_runs.fetch_add(1, Ordering::SeqCst);
+                Err("refresh failed".into())
+            })
+            .await;
+        sleep(Duration::from_millis(50)).await;
 
-        assert_eq!(first_error.unwrap_err().to_string(), "refresh failed");
-        assert_eq!(second_error.unwrap_err().to_string(), "refresh failed");
+        let second_runs = Arc::clone(&runs);
+        coordinator
+            .spawn("codex", logger, move || async move {
+                second_runs.fetch_add(1, Ordering::SeqCst);
+                Ok(())
+            })
+            .await;
+        sleep(Duration::from_millis(50)).await;
+
+        assert_eq!(runs.load(Ordering::SeqCst), 2);
+    }
+
+    fn test_logger(label: &str) -> DaemonLogger {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!(
+            "msp-daemon-runtime-{label}-{}-{nonce}.log",
+            std::process::id()
+        ));
+        DaemonLogger::open(path).unwrap()
     }
 }

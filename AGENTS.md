@@ -22,8 +22,9 @@
 
 - Keep shared import/export workflow helpers split by responsibility: provider-specific parsing stays in `src/config/import_export/<provider>.rs`, while format-specific file operations live in shared helpers under `src/config/import_export/`.
 - Keep CLI orchestration thin: `src/commands.rs` should focus on top-level dispatch, while grouped command workflows such as import/install or remote auth should live in `src/commands/*.rs`.
-- Keep `add` side-effect free beyond config persistence: adding a server should only write config, while provider-dependent cache refresh belongs to `reload` and `mcp` startup.
+- Keep `add` explicit about provider-dependent caching: `msp add` must require `--provider`, resolve the provider before persisting anything, then immediately refresh that server's cache with the chosen provider, and roll back the new config entry if cache generation fails, while keeping provider resolution and reload orchestration out of `src/config/`.
 - Keep `msp mcp` on a daemon/client split: the foreground `msp mcp` process should stay a thin stdio MCP facade, while the shared daemon owns downstream MCP communication, socket lifecycle, idle shutdown, and background self-update work.
+- Keep `msp mcp` startup cache-first: daemon `load_toolsets` requests should return the current cached snapshot immediately, trigger provider-specific refresh in the background, and avoid blocking MCP readiness on downstream refresh success.
 - Keep daemon management semantics centralized in `src/daemon/`: user-facing commands such as `msp daemon status|stop|restart` should stay thin wrappers over shared lifecycle helpers instead of duplicating socket/process control in CLI dispatch.
 - Keep daemon control requests fail-fast: status/stop/restart probes should use short client-side timeouts and report an unresponsive daemon clearly instead of hanging forever when a socket accepts but never replies.
 - Keep daemon observability centralized in `src/daemon/`: runtime lifecycle and request logs should be written to a stable file next to the socket so unresponsive or stuck daemons can be diagnosed after detached startup.
