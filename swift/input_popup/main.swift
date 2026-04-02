@@ -102,10 +102,6 @@ final class QuestionView: NSStackView, NSTextFieldDelegate {
         }
     }
 
-    func initialFocusableView() -> NSView? {
-        optionButtons.first
-    }
-
     @objc
     private func selectionChanged(_ sender: NSButton) {
         guard let index = optionButtons.firstIndex(of: sender) else {
@@ -187,6 +183,9 @@ final class QuestionView: NSStackView, NSTextFieldDelegate {
                 descriptionLabel.maximumNumberOfLines = 0
                 descriptionLabel.textColor = .labelColor
                 descriptionLabel.font = .systemFont(ofSize: 12)
+                descriptionLabel.isSelectable = false
+                descriptionLabel.allowsEditingTextAttributes = false
+                descriptionLabel.refusesFirstResponder = true
                 descriptionLabel.identifier = rowStack.identifier
                 rowStack.addArrangedSubview(descriptionLabel)
                 let gesture = NSClickGestureRecognizer(target: self, action: #selector(descriptionClicked(_:)))
@@ -225,6 +224,7 @@ final class PopupWindowController: NSWindowController, NSWindowDelegate {
     private let request: PopupInputRequest
     private let questionViews: [QuestionView]
     private let errorLabel = NSTextField(wrappingLabelWithString: "")
+    private var isClosingProgrammatically = false
     private(set) var response = PopupInputResponse.cancelled()
 
     init(request: PopupInputRequest) {
@@ -258,14 +258,9 @@ final class PopupWindowController: NSWindowController, NSWindowDelegate {
         NSApp.activate(ignoringOtherApps: true)
         showWindow(nil)
         window.makeKeyAndOrderFront(nil)
-        if let initialView = questionViews.first?.initialFocusableView() {
-            window.makeFirstResponder(initialView)
-        }
+        window.makeFirstResponder(nil)
 
-        let result = NSApp.runModal(for: window)
-        if result == .abort {
-            response = .cancelled()
-        }
+        _ = NSApp.runModal(for: window)
         return response
     }
 
@@ -274,6 +269,12 @@ final class PopupWindowController: NSWindowController, NSWindowDelegate {
             return
         }
 
+        if isClosingProgrammatically {
+            _ = notification
+            return
+        }
+
+        response = .cancelled()
         if NSApp.modalWindow === window {
             NSApp.stopModal(withCode: .abort)
         }
@@ -313,6 +314,7 @@ final class PopupWindowController: NSWindowController, NSWindowDelegate {
             return
         }
 
+        isClosingProgrammatically = true
         NSApp.stopModal(withCode: code)
         window.orderOut(nil)
         window.close()
@@ -329,17 +331,11 @@ final class PopupWindowController: NSWindowController, NSWindowDelegate {
         rootStack.spacing = 16
         rootStack.translatesAutoresizingMaskIntoConstraints = false
 
-        let introLabel = NSTextField(
-            wrappingLabelWithString: "Select one option for each question. Choose Other to type a custom answer."
-        )
-        introLabel.maximumNumberOfLines = 0
-
         errorLabel.textColor = .systemRed
         errorLabel.maximumNumberOfLines = 0
         errorLabel.stringValue = ""
         errorLabel.isHidden = false
 
-        rootStack.addArrangedSubview(introLabel)
         for view in questionViews {
             rootStack.addArrangedSubview(view)
         }

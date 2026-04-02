@@ -1,6 +1,6 @@
 use rmcp::{
     ErrorData as McpError,
-    model::{CallToolResult, Content, Tool, object},
+    model::{CallToolResult, Content, Tool, ToolAnnotations, object},
 };
 use serde::{Deserialize, de::DeserializeOwned};
 use serde_json::{Map as JsonMap, Value as JsonValue, json};
@@ -234,6 +234,7 @@ fn activate_tool_definition(toolsets: &[CachedToolsetRecord]) -> Tool {
             "additionalProperties": false
         })),
     )
+    .with_annotations(read_only_annotations())
 }
 
 fn activate_external_mcp_tool_definition() -> Tool {
@@ -256,6 +257,11 @@ fn activate_external_mcp_tool_definition() -> Tool {
             "additionalProperties": false
         })),
     )
+    .with_annotations(read_only_annotations())
+}
+
+fn read_only_annotations() -> ToolAnnotations {
+    ToolAnnotations::new().read_only(true)
 }
 
 fn resolve_tool_snapshot<'a>(

@@ -2,7 +2,7 @@
 
 - Use English for all code, comments, and documentation, to ensure that it is accessible to the widest possible audience.
 - Keep all usage of this project in README.md, update it as needed, and make sure it is clear and concise.
-- Before making any changes, present the plan (in the same language as user's input) to the user and ask the user for approving (along with the plan) using any available request user input tool
+- Before making any changes, present the plan (in the same language as user's input) to the user and ask the user for approving (along with the plan) using any available request user input tool (using the same language as user's input).
 - Reduce complexity, during reading and editing the code, find complexity and try to reduce it.
 
 # Code edit
@@ -34,8 +34,10 @@
 - Keep self-update logic split by concern: version comparison, state-file persistence, binary installation, and runtime orchestration should not live in a single Rust module.
 - Keep local config record construction centralized: adding or importing a server should go through shared draft builders instead of duplicating transport-to-table conversion logic.
 - Keep MCP proxy logic split between cache loading, tool-schema helpers, downstream client lifecycle, and request dispatch so `src/mcp_server/` remains easy to extend without re-reading one large file.
+- Keep downstream tool metadata normalization centralized in `src/types.rs`: proxy-specific annotation overrides such as forcing `destructiveHint = false` should be applied in shared snapshot/cache helpers instead of being duplicated in reload, cache loading, or MCP response code.
 - Keep GitHub release publication in CI on the `gh` CLI path instead of Node-based third-party release actions, so release jobs stay aligned with GitHub-hosted tooling and avoid deprecated Node runtime churn.
 - Keep popup input logic split by concern: shared request/response types stay under `src/input_popup/`, the macOS UI stays in the embedded Swift/AppKit helper built from `swift/input_popup/main.swift`, Rust owns helper extraction and subprocess orchestration, non-macOS targets return a clear unsupported error without linking GUI libraries, and CLI/MCP entrypoints should call the shared popup runner instead of duplicating dialog behavior.
+- Keep popup modal completion one-shot in the Swift helper: Submit/Cancel initiated closure must not be reclassified as a window-close cancellation, so successful selections always survive until JSON response encoding.
 - Keep remote OAuth split by concern: generic OAuth discovery and token storage should stay reusable under `src/remote/oauth.rs`, while unsupported hosted endpoints should be rejected earlier by shared config-level remote URL validation.
 
 # Packages

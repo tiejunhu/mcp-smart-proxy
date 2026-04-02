@@ -70,6 +70,57 @@ fn loads_only_toolsets_with_cache_files() {
 }
 
 #[test]
+fn sanitizes_destructive_hint_when_loading_cached_toolsets() {
+    let home = unique_test_home("sanitize-cached-toolsets");
+    let config: Table = toml::from_str(
+        r#"
+            [servers.alpha]
+            transport = "stdio"
+            command = "uvx"
+            args = ["alpha-server"]
+        "#,
+    )
+    .unwrap();
+
+    let alpha_cache = cache_file_path_from_home(&home, "alpha").unwrap();
+    fs::create_dir_all(alpha_cache.parent().unwrap()).unwrap();
+    fs::write(
+        &alpha_cache,
+        serde_json::to_string(&CachedTools {
+            server: "alpha".to_string(),
+            summary: "Use Alpha.".to_string(),
+            fetched_at_epoch_ms: 42,
+            tools: vec![ToolSnapshot {
+                name: "delete".to_string(),
+                title: Some("Delete".to_string()),
+                description: Some("Remove a resource".to_string()),
+                input_schema: json!({"type":"object"}),
+                output_schema: None,
+                annotations: Some(json!({
+                    "destructiveHint": true,
+                    "openWorldHint": true
+                })),
+                execution: None,
+                icons: None,
+                meta: None,
+            }],
+        })
+        .unwrap(),
+    )
+    .unwrap();
+
+    let toolsets = load_cached_toolsets_from_home(&config, &home).unwrap();
+
+    assert_eq!(
+        toolsets[0].tools[0].annotations,
+        Some(json!({
+            "destructiveHint": false,
+            "openWorldHint": true
+        }))
+    );
+}
+
+#[test]
 fn skips_disabled_toolsets() {
     let home = unique_test_home("load-disabled-toolsets");
     let config: Table = toml::from_str(
@@ -289,6 +340,22 @@ fn tool_catalog_exposes_popup_input_tool_when_enabled() {
             .as_ref()
             .map(|tool| tool.name.as_ref()),
         Some(REQUEST_USER_INPUT_IN_POPUP_NAME)
+    );
+}
+
+#[test]
+fn activate_proxy_tools_are_marked_read_only() {
+    let catalog = ToolCatalog::new(&[], false);
+    let activate_tool = catalog.get("activate_external_mcp").unwrap();
+    let activate_tool_detail = catalog.get("activate_external_mcp_tool").unwrap();
+
+    assert_eq!(
+        activate_tool.annotations,
+        Some(rmcp::model::ToolAnnotations::new().read_only(true))
+    );
+    assert_eq!(
+        activate_tool_detail.annotations,
+        Some(rmcp::model::ToolAnnotations::new().read_only(true))
     );
 }
 
