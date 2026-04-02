@@ -41,6 +41,7 @@ enum QuestionPresentationState {
     case pending
     case active
     case answered
+    case manual
 }
 
 final class RoundedContainerView: NSView {
@@ -78,6 +79,18 @@ final class RoundedContainerView: NSView {
 
 final class PopupWindow: NSWindow {
     var onShortcutKey: ((Character) -> Bool)?
+    var onUserInput: (() -> Void)?
+
+    override func sendEvent(_ event: NSEvent) {
+        switch event.type {
+        case .keyDown, .leftMouseDown, .rightMouseDown, .otherMouseDown:
+            onUserInput?()
+        default:
+            break
+        }
+
+        super.sendEvent(event)
+    }
 
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
         let disallowedModifiers = NSEvent.ModifierFlags([.command, .control, .option, .function])
@@ -231,7 +244,7 @@ final class QuestionView: NSStackView, NSTextFieldDelegate {
     }
 
     func activateShortcut(at index: Int) {
-        guard isInteractionEnabled else {
+        guard ensureInteractionEnabledForSelection() else {
             return
         }
 
@@ -271,11 +284,11 @@ final class QuestionView: NSStackView, NSTextFieldDelegate {
 
     @objc
     private func selectionChanged(_ sender: NSButton) {
-        guard isInteractionEnabled else {
+        guard let index = optionButtons.firstIndex(of: sender) else {
             return
         }
 
-        guard let index = optionButtons.firstIndex(of: sender) else {
+        guard ensureInteractionEnabledForSelection() else {
             return
         }
 
@@ -359,7 +372,7 @@ final class QuestionView: NSStackView, NSTextFieldDelegate {
     }
 
     private func selectOtherOption() {
-        guard isInteractionEnabled else {
+        guard ensureInteractionEnabledForSelection() else {
             return
         }
 
@@ -377,6 +390,14 @@ final class QuestionView: NSStackView, NSTextFieldDelegate {
         refreshSelectionUI()
         onAnswerStateChanged?()
         window?.makeFirstResponder(customField)
+    }
+
+    private func ensureInteractionEnabledForSelection() -> Bool {
+        if !isInteractionEnabled {
+            onInteraction?()
+        }
+
+        return isInteractionEnabled
     }
 
     private func confirmCustomFieldSelection() {
@@ -423,6 +444,11 @@ final class QuestionView: NSStackView, NSTextFieldDelegate {
             promptLabel.textColor = .labelColor
             sectionCard.fillColor = .selectedContentBackgroundColor.withAlphaComponent(0.08)
             sectionCard.strokeColor = .separatorColor.withAlphaComponent(0.26)
+        case .manual:
+            alphaValue = 1.0
+            promptLabel.textColor = .labelColor
+            sectionCard.fillColor = .controlBackgroundColor.withAlphaComponent(0.72)
+            sectionCard.strokeColor = .separatorColor.withAlphaComponent(0.38)
         }
     }
 
@@ -430,7 +456,7 @@ final class QuestionView: NSStackView, NSTextFieldDelegate {
         let optionsStack = NSStackView()
         optionsStack.orientation = .vertical
         optionsStack.alignment = .leading
-        optionsStack.spacing = 4
+        optionsStack.spacing = 2
         optionsStack.translatesAutoresizingMaskIntoConstraints = false
 
         for (index, option) in question.options.enumerated() {
@@ -549,14 +575,14 @@ final class QuestionView: NSStackView, NSTextFieldDelegate {
 
     @objc
     private func descriptionClicked(_ sender: NSClickGestureRecognizer) {
-        guard isInteractionEnabled else {
-            return
-        }
-
         guard
             let rawValue = sender.view?.identifier?.rawValue,
             let index = Int(rawValue)
         else {
+            return
+        }
+
+        guard ensureInteractionEnabledForSelection() else {
             return
         }
 
@@ -631,7 +657,6 @@ final class PopupWindowController: NSWindowController, NSWindowDelegate {
     private let countdownLabel = NSTextField(wrappingLabelWithString: "")
     private let errorLabel = NSTextField(wrappingLabelWithString: "")
     private let stopTimerButton = NSButton(title: "Turn Off Auto-Select", target: nil, action: nil)
-    private let submitButton = NSButton(title: "Continue", target: nil, action: nil)
     private weak var contentScrollView: NSScrollView?
     private weak var contentStack: NSStackView?
     private weak var actionsView: NSView?
@@ -664,6 +689,9 @@ final class PopupWindowController: NSWindowController, NSWindowDelegate {
         window.delegate = self
         window.onShortcutKey = { [weak self] shortcut in
             self?.handleShortcutKey(shortcut) ?? false
+        }
+        window.onUserInput = { [weak self] in
+            self?.handleAnyUserInput()
         }
         wireQuestionCallbacks()
         buildInterface()
@@ -722,25 +750,45 @@ final class PopupWindowController: NSWindowController, NSWindowDelegate {
 
     @objc
     private func submit(_ sender: Any?) {
-        guard let firstInvalidIndex = questionViews.firstIndex(where: { $0.selectedAnswer == nil }) else {
-            let answers = Dictionary(uniqueKeysWithValues: zip(request.questions, questionViews).compactMap { pair in
-                let (question, view) = pair
-                return view.selectedAnswer.map { answer in
-                    (question.id, PopupAnswerValue(answers: [answer]))
-                }
-            })
-            setValidationMessage(nil)
-            response = PopupInputResponse(answers: answers)
-            close(with: .OK)
+        guard questionViews.indices.contains(activeQuestionIndex) else {
+            _ = sender
             return
         }
 
-        if firstInvalidIndex != activeQuestionIndex {
-            activateQuestion(at: firstInvalidIndex, startCountdown: true)
+        let activeView = questionViews[activeQuestionIndex]
+        guard activeView.selectedAnswer != nil else {
+            setValidationMessage("Choose one answer for the current question.")
+            activeView.focusFirstInvalidControl()
+            _ = sender
+            return
         }
 
-        setValidationMessage("Choose one answer for every question.")
-        questionViews[firstInvalidIndex].focusFirstInvalidControl()
+        if let nextIndex = nextUnansweredQuestionIndex(startingAt: activeQuestionIndex + 1) {
+            setValidationMessage(nil)
+            activateQuestion(at: nextIndex, startCountdown: true)
+            _ = sender
+            return
+        }
+
+        guard questionViews.allSatisfy({ $0.selectedAnswer != nil }) else {
+            if let firstInvalidIndex = questionViews.firstIndex(where: { $0.selectedAnswer == nil }) {
+                activateQuestion(at: firstInvalidIndex, startCountdown: true)
+                setValidationMessage("Choose one answer for every question.")
+                questionViews[firstInvalidIndex].focusFirstInvalidControl()
+            }
+            _ = sender
+            return
+        }
+
+        let answers = Dictionary(uniqueKeysWithValues: zip(request.questions, questionViews).compactMap { pair in
+            let (question, view) = pair
+            return view.selectedAnswer.map { answer in
+                (question.id, PopupAnswerValue(answers: [answer]))
+            }
+        })
+        setValidationMessage(nil)
+        response = PopupInputResponse(answers: answers)
+        close(with: .OK)
         _ = sender
     }
 
@@ -777,7 +825,6 @@ final class PopupWindowController: NSWindowController, NSWindowDelegate {
         for (index, view) in questionViews.enumerated() {
             view.onAnswerStateChanged = { [weak self] in
                 self?.setValidationMessage(nil)
-                self?.updateSubmitButtonState()
             }
             view.onInteraction = { [weak self] in
                 self?.handleQuestionInteraction(at: index)
@@ -789,30 +836,43 @@ final class PopupWindowController: NSWindowController, NSWindowDelegate {
     }
 
     private func handleShortcutKey(_ shortcut: Character) -> Bool {
-        guard
-            questionViews.indices.contains(activeQuestionIndex),
-            !questionViews[activeQuestionIndex].isEditingCustomField()
-        else {
+        guard !questionViews.contains(where: { $0.isEditingCustomField() }) else {
             return false
         }
 
-        guard let optionIndex = shortcutAssignments[activeQuestionIndex].firstIndex(where: { $0 == shortcut }) else {
+        guard let (questionIndex, optionIndex) = shortcutTarget(for: shortcut) else {
             return false
         }
 
-        questionViews[activeQuestionIndex].activateShortcut(at: optionIndex)
+        transitionToManualMode(focusing: questionIndex)
+        questionViews[questionIndex].activateShortcut(at: optionIndex)
         return true
     }
 
-    private func handleQuestionInteraction(at index: Int) {
-        guard index == activeQuestionIndex else {
+    private func shortcutTarget(for shortcut: Character) -> (questionIndex: Int, optionIndex: Int)? {
+        for (questionIndex, assignments) in shortcutAssignments.enumerated() {
+            if let optionIndex = assignments.firstIndex(where: { $0 == shortcut }) {
+                return (questionIndex, optionIndex)
+            }
+        }
+
+        return nil
+    }
+
+    private func handleAnyUserInput() {
+        guard !isCountdownPermanentlyStopped else {
             return
         }
 
-        if questionTimer != nil {
-            invalidateQuestionTimer()
-            updateStatusLabel()
+        stopCountdownPermanently()
+    }
+
+    private func handleQuestionInteraction(at index: Int) {
+        guard questionViews.indices.contains(index) else {
+            return
         }
+
+        transitionToManualMode(focusing: index)
     }
 
     private func handleAnswerCommitted(at index: Int) {
@@ -821,6 +881,13 @@ final class PopupWindowController: NSWindowController, NSWindowDelegate {
         }
 
         setValidationMessage(nil)
+
+        if isCountdownPermanentlyStopped {
+            if questionViews.allSatisfy({ $0.isAnswered }) {
+                submit(nil)
+            }
+            return
+        }
 
         if let nextIndex = nextUnansweredQuestionIndex(startingAt: index + 1) {
             activateQuestion(at: nextIndex, startCountdown: true)
@@ -990,22 +1057,13 @@ final class PopupWindowController: NSWindowController, NSWindowDelegate {
         spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
         spacer.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
-        let cancelButton = NSButton(title: "Cancel", target: self, action: #selector(cancel))
+        let cancelButton = NSButton(title: "Send Empty Answer", target: self, action: #selector(cancel))
         cancelButton.keyEquivalent = "\u{1b}"
-        submitButton.target = self
-        submitButton.action = #selector(submit)
-        submitButton.keyEquivalent = "\r"
-        updateSubmitButtonState()
 
         buttons.addArrangedSubview(spacer)
         buttons.addArrangedSubview(cancelButton)
-        buttons.addArrangedSubview(submitButton)
 
         return buttons
-    }
-
-    private func updateSubmitButtonState() {
-        submitButton.isEnabled = questionViews.allSatisfy { $0.selectedAnswer != nil }
     }
 
     private func focusStopTimerButtonIfNeeded() {
@@ -1076,11 +1134,18 @@ final class PopupWindowController: NSWindowController, NSWindowDelegate {
     }
 
     private func updateQuestionStates() {
+        if isCountdownPermanentlyStopped {
+            for view in questionViews {
+                view.setQuestionState(.manual, isInteractive: true)
+            }
+            return
+        }
+
         for (index, view) in questionViews.enumerated() {
-            if index < activeQuestionIndex || view.isAnswered {
-                view.setQuestionState(.answered, isInteractive: false)
-            } else if index == activeQuestionIndex {
+            if index == activeQuestionIndex {
                 view.setQuestionState(.active, isInteractive: true)
+            } else if view.isAnswered {
+                view.setQuestionState(.answered, isInteractive: true)
             } else {
                 view.setQuestionState(.pending, isInteractive: false)
             }
@@ -1143,14 +1208,43 @@ final class PopupWindowController: NSWindowController, NSWindowDelegate {
     private func stopCountdownPermanently() {
         isCountdownPermanentlyStopped = true
         invalidateQuestionTimer()
+        updateQuestionStates()
         updateStatusLabel()
+        clearDialogFocus()
+    }
+
+    private func transitionToManualMode(focusing index: Int) {
+        guard questionViews.indices.contains(index) else {
+            return
+        }
+
+        activeQuestionIndex = index
+        if !isCountdownPermanentlyStopped {
+            stopCountdownPermanently()
+            return
+        }
+
+        updateQuestionStates()
+        updateStatusLabel()
+        scrollQuestionIntoView(index)
     }
 
     @objc
     private func turnOffAutoSelect(_ sender: Any?) {
-        window?.makeFirstResponder(nil)
+        clearDialogFocus()
         stopCountdownPermanently()
         _ = sender
+    }
+
+    private func clearDialogFocus() {
+        guard let window else {
+            return
+        }
+
+        window.makeFirstResponder(nil)
+        DispatchQueue.main.async { [weak window] in
+            window?.makeFirstResponder(nil)
+        }
     }
 
     private func invalidateQuestionTimer() {
@@ -1165,25 +1259,27 @@ final class PopupWindowController: NSWindowController, NSWindowDelegate {
             return
         }
 
+        stopTimerButton.isHidden = isCountdownPermanentlyStopped
+        stopTimerButton.isEnabled = !isCountdownPermanentlyStopped
+
+        if isCountdownPermanentlyStopped {
+            progressLabel.stringValue = "Review Answers"
+            countdownLabel.stringValue =
+                "Auto-select is off for the rest of this dialog."
+            return
+        }
+
         let questionNumber = activeQuestionIndex + 1
         let totalQuestions = questionViews.count
         progressLabel.stringValue = "Question \(questionNumber) of \(totalQuestions)"
-        stopTimerButton.isHidden = isCountdownPermanentlyStopped
-        stopTimerButton.isEnabled = !isCountdownPermanentlyStopped
         if questionTimer != nil {
             countdownLabel.stringValue =
                 "Auto-selects the first option in \(remainingQuestionSeconds) seconds unless you interact."
             return
         }
 
-        if isCountdownPermanentlyStopped {
-            countdownLabel.stringValue =
-                "Timer disabled for the rest of this dialog. Confirm this answer to continue."
-            return
-        }
-
         countdownLabel.stringValue =
-            "Timer stopped. Confirm this answer to continue."
+            "Auto-select is currently paused."
     }
 
     private func nextUnansweredQuestionIndex(startingAt startIndex: Int) -> Int? {

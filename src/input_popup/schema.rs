@@ -6,11 +6,13 @@ const OTHER_LABEL: &str = "Other";
 const OTHER_DESCRIPTION: &str = "Enter a custom answer instead of choosing a fixed option.";
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct PopupInputRequest {
     pub questions: Vec<PopupQuestion>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct PopupQuestion {
     pub id: String,
     pub question: String,
@@ -18,6 +20,7 @@ pub struct PopupQuestion {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct PopupOption {
     pub label: String,
     pub description: String,
@@ -122,5 +125,29 @@ mod tests {
             response.answers["question_one"].answers,
             vec!["Custom answer".to_string()]
         );
+    }
+
+    #[test]
+    fn rejects_removed_header_field() {
+        let error = serde_json::from_str::<PopupInputRequest>(
+            r#"{
+                "questions": [
+                    {
+                        "id": "delivery_strategy",
+                        "header": "Strategy",
+                        "question": "Pick one",
+                        "options": [
+                            {
+                                "label": "Fast path",
+                                "description": "Prefer the quickest option."
+                            }
+                        ]
+                    }
+                ]
+            }"#,
+        )
+        .expect_err("popup requests should reject the removed header field");
+
+        assert!(error.to_string().contains("unknown field `header`"));
     }
 }

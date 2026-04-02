@@ -61,7 +61,7 @@ fn sample_request() -> PopupInputRequest {
         questions: vec![
             PopupQuestion {
                 id: "delivery_strategy".to_string(),
-                question: "Which delivery strategy should this run use?".to_string(),
+                question: "Which delivery strategy\nshould this run use?".to_string(),
                 options: vec![
                     PopupOption {
                         label: "Fast path".to_string(),

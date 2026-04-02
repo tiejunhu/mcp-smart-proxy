@@ -14,7 +14,7 @@ use super::tools::{
     CALL_TOOL_IN_ADDITIONAL_MCP_NAME, REQUEST_USER_INPUT_IN_POPUP_NAME,
     STDIO_HOST_REQUIRED_MESSAGE, ToolCatalog, build_activate_tool_description,
     build_activate_tool_detail_result, build_activate_tool_result,
-    call_tool_in_additional_mcp_definition, parse_tool_arguments_json,
+    call_tool_in_additional_mcp_definition, parse_tool_arguments_json, parse_tool_request,
     request_user_input_in_popup_definition, resolve_toolset_name,
 };
 use super::validate_proxy_stdio_launch;
@@ -308,9 +308,54 @@ fn popup_input_tool_definition_contains_questions_schema() {
         .get("properties")
         .and_then(JsonValue::as_object)
         .unwrap();
+    let question_schema = properties
+        .get("questions")
+        .and_then(|questions| questions.get("items"))
+        .and_then(JsonValue::as_object)
+        .unwrap();
+    let question_properties = question_schema
+        .get("properties")
+        .and_then(JsonValue::as_object)
+        .unwrap();
+    let question_required = question_schema
+        .get("required")
+        .and_then(JsonValue::as_array)
+        .unwrap();
 
     assert_eq!(tool.name.as_ref(), REQUEST_USER_INPUT_IN_POPUP_NAME);
     assert!(properties.contains_key("questions"));
+    assert!(!question_properties.contains_key("header"));
+    assert_eq!(
+        question_required,
+        &vec![json!("id"), json!("question"), json!("options")]
+    );
+}
+
+#[test]
+fn popup_input_tool_rejects_removed_header_field() {
+    let arguments = json!({
+        "questions": [
+            {
+                "id": "delivery_strategy",
+                "header": "Strategy",
+                "question": "Pick one",
+                "options": [
+                    {
+                        "label": "Fast path",
+                        "description": "Prefer the quickest option."
+                    }
+                ]
+            }
+        ]
+    });
+
+    let error = parse_tool_request::<crate::input_popup::PopupInputRequest>(
+        REQUEST_USER_INPUT_IN_POPUP_NAME,
+        arguments.as_object().unwrap().clone(),
+    )
+    .expect_err("popup tool arguments should reject the removed header field");
+
+    assert!(error.message.contains("unknown field `header`"));
 }
 
 #[test]

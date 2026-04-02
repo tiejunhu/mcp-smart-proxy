@@ -24,21 +24,17 @@ pub fn popup_input_schema() -> serde_json::Value {
         "properties": {
             "questions": {
                 "type": "array",
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        "id": {
-                            "type": "string",
-                            "description": "Stable snake_case identifier for the question."
-                        },
-                        "header": {
-                            "type": "string",
-                            "description": "Short UI heading with at most 12 characters."
-                        },
-                        "question": {
-                            "type": "string",
-                            "description": "The user-facing prompt."
-                        },
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "id": {
+                                "type": "string",
+                                "description": "Stable snake_case identifier for the question."
+                            },
+                            "question": {
+                                "type": "string",
+                                "description": "The user-facing prompt. Supports multi-line text, but should be concise and clear. Avoid including the options in the question text, as they are displayed separately."
+                            },
                         "options": {
                             "type": "array",
                             "items": {
@@ -58,7 +54,7 @@ pub fn popup_input_schema() -> serde_json::Value {
                             }
                         }
                     },
-                    "required": ["id", "header", "question", "options"],
+                    "required": ["id", "question", "options"],
                     "additionalProperties": false
                 }
             }
