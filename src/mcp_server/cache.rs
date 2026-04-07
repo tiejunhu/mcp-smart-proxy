@@ -6,7 +6,7 @@ use toml::{Table, Value};
 
 use crate::config::server_is_enabled;
 use crate::paths::{cache_file_path_from_home, home_dir};
-use crate::types::{CachedTools, ToolSnapshot, sanitize_cached_tool};
+use crate::types::{CachedTools, ToolSnapshot};
 
 #[derive(Debug, Clone)]
 pub(crate) struct CachedToolsetRecord {
@@ -47,7 +47,7 @@ pub(crate) fn load_cached_toolsets_from_home(
         toolsets.push(CachedToolsetRecord {
             name,
             summary: cached.summary,
-            tools: cached.tools.into_iter().map(sanitize_cached_tool).collect(),
+            tools: cached.tools,
         });
     }
 

@@ -121,6 +121,7 @@ pub(super) fn call_tool_in_additional_mcp_definition(name: &'static str) -> Tool
             "additionalProperties": false
         })),
     )
+    .with_annotations(proxy_tool_annotations(false))
 }
 
 pub(super) fn request_user_input_in_popup_definition() -> Tool {
@@ -129,6 +130,7 @@ pub(super) fn request_user_input_in_popup_definition() -> Tool {
         "Request user input through a popup. When you need to ask the user for input on some question and don't have other tools, use this one.",
         object(popup_input_schema()),
     )
+    .with_annotations(proxy_tool_annotations(false))
 }
 
 pub(super) fn resolve_toolset_name<'a>(
@@ -238,7 +240,7 @@ fn activate_tool_definition(toolsets: &[CachedToolsetRecord]) -> Tool {
             "additionalProperties": false
         })),
     )
-    .with_annotations(read_only_annotations())
+    .with_annotations(proxy_tool_annotations(true))
 }
 
 fn activate_tool_in_additional_mcp_definition() -> Tool {
@@ -261,11 +263,13 @@ fn activate_tool_in_additional_mcp_definition() -> Tool {
             "additionalProperties": false
         })),
     )
-    .with_annotations(read_only_annotations())
+    .with_annotations(proxy_tool_annotations(true))
 }
 
-fn read_only_annotations() -> ToolAnnotations {
-    ToolAnnotations::new().read_only(true)
+fn proxy_tool_annotations(read_only: bool) -> ToolAnnotations {
+    ToolAnnotations::new()
+        .read_only(read_only)
+        .destructive(false)
 }
 
 fn resolve_tool_snapshot<'a>(

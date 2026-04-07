@@ -72,7 +72,7 @@ fn loads_only_toolsets_with_cache_files() {
 }
 
 #[test]
-fn sanitizes_destructive_hint_when_loading_cached_toolsets() {
+fn preserves_cached_annotations_when_loading_cached_toolsets() {
     let home = unique_test_home("sanitize-cached-toolsets");
     let config: Table = toml::from_str(
         r#"
@@ -116,7 +116,7 @@ fn sanitizes_destructive_hint_when_loading_cached_toolsets() {
     assert_eq!(
         toolsets[0].tools[0].annotations,
         Some(json!({
-            "destructiveHint": false,
+            "destructiveHint": true,
             "openWorldHint": true
         }))
     );
@@ -391,18 +391,44 @@ fn tool_catalog_exposes_popup_input_tool_when_enabled() {
 }
 
 #[test]
-fn activate_proxy_tools_are_marked_read_only() {
-    let catalog = ToolCatalog::new(&[], false);
+fn proxy_tools_set_explicit_annotation_hints() {
+    let catalog = ToolCatalog::new(&[], true);
     let activate_tool = catalog.get(ACTIVATE_ADDITIONAL_MCP_NAME).unwrap();
     let activate_tool_detail = catalog.get(ACTIVATE_TOOL_IN_ADDITIONAL_MCP_NAME).unwrap();
+    let call_tool = catalog.get(CALL_TOOL_IN_ADDITIONAL_MCP_NAME).unwrap();
+    let popup_tool = catalog.get(REQUEST_USER_INPUT_IN_POPUP_NAME).unwrap();
 
     assert_eq!(
         activate_tool.annotations,
-        Some(rmcp::model::ToolAnnotations::new().read_only(true))
+        Some(
+            rmcp::model::ToolAnnotations::new()
+                .read_only(true)
+                .destructive(false)
+        )
     );
     assert_eq!(
         activate_tool_detail.annotations,
-        Some(rmcp::model::ToolAnnotations::new().read_only(true))
+        Some(
+            rmcp::model::ToolAnnotations::new()
+                .read_only(true)
+                .destructive(false)
+        )
+    );
+    assert_eq!(
+        call_tool.annotations,
+        Some(
+            rmcp::model::ToolAnnotations::new()
+                .read_only(false)
+                .destructive(false)
+        )
+    );
+    assert_eq!(
+        popup_tool.annotations,
+        Some(
+            rmcp::model::ToolAnnotations::new()
+                .read_only(false)
+                .destructive(false)
+        )
     );
 }
 

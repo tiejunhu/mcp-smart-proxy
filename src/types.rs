@@ -4,7 +4,7 @@ use std::ffi::OsString;
 
 use rmcp::model::{CallToolResult, Tool};
 use serde::{Deserialize, Serialize};
-use serde_json::{Map as JsonMap, Value as JsonValue};
+use serde_json::Value as JsonValue;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ConfiguredTransport {
@@ -139,33 +139,15 @@ pub fn tool_snapshot(tool: &Tool) -> ToolSnapshot {
             .output_schema
             .as_ref()
             .map(|schema| JsonValue::Object((**schema).clone())),
-        annotations: Some(sanitize_tool_annotations(
-            tool.annotations.as_ref().map(json_value_or_null),
-        )),
+        annotations: tool.annotations.as_ref().map(json_value_or_null),
         execution: tool.execution.as_ref().map(json_value_or_null),
         icons: tool.icons.as_ref().map(json_value_or_null),
         meta: tool.meta.as_ref().map(json_value_or_null),
     }
 }
 
-pub fn sanitize_cached_tool(tool: ToolSnapshot) -> ToolSnapshot {
-    ToolSnapshot {
-        annotations: Some(sanitize_tool_annotations(tool.annotations)),
-        ..tool
-    }
-}
-
 fn json_value_or_null<T: Serialize>(value: &T) -> JsonValue {
     serde_json::to_value(value).unwrap_or(JsonValue::Null)
-}
-
-fn sanitize_tool_annotations(annotations: Option<JsonValue>) -> JsonValue {
-    let mut annotations = match annotations {
-        Some(JsonValue::Object(map)) => map,
-        _ => JsonMap::new(),
-    };
-    annotations.insert("destructiveHint".to_string(), JsonValue::Bool(false));
-    JsonValue::Object(annotations)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -280,19 +262,16 @@ mod tests {
     }
 
     #[test]
-    fn tool_snapshot_forces_destructive_hint_off_when_annotations_are_missing() {
+    fn tool_snapshot_preserves_missing_annotations() {
         let tool = Tool::new("search", "Search things", serde_json::Map::new());
 
         let snapshot = tool_snapshot(&tool);
 
-        assert_eq!(
-            snapshot.annotations,
-            Some(json!({ "destructiveHint": false }))
-        );
+        assert_eq!(snapshot.annotations, None);
     }
 
     #[test]
-    fn tool_snapshot_preserves_other_annotations_while_disabling_destructive_hint() {
+    fn tool_snapshot_preserves_all_annotation_hints() {
         let tool = Tool::new("search", "Search things", serde_json::Map::new()).annotate(
             ToolAnnotations::new()
                 .read_only(false)
@@ -307,37 +286,9 @@ mod tests {
             snapshot.annotations,
             Some(json!({
                 "readOnlyHint": false,
-                "destructiveHint": false,
+                "destructiveHint": true,
                 "idempotentHint": true,
                 "openWorldHint": false
-            }))
-        );
-    }
-
-    #[test]
-    fn sanitize_cached_tool_overrides_destructive_hint_in_cached_annotations() {
-        let tool = ToolSnapshot {
-            name: "search".to_string(),
-            title: Some("Search".to_string()),
-            description: Some("Search things".to_string()),
-            input_schema: json!({"type":"object"}),
-            output_schema: None,
-            annotations: Some(json!({
-                "destructiveHint": true,
-                "openWorldHint": true
-            })),
-            execution: None,
-            icons: None,
-            meta: None,
-        };
-
-        let sanitized = sanitize_cached_tool(tool);
-
-        assert_eq!(
-            sanitized.annotations,
-            Some(json!({
-                "destructiveHint": false,
-                "openWorldHint": true
             }))
         );
     }
