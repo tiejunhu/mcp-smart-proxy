@@ -20,6 +20,7 @@ pub async fn serve_cached_toolsets(
     config_path: &Path,
     provider: ModelProviderConfig,
     enable_input: bool,
+    output_toon: bool,
 ) -> Result<(), Box<dyn Error>> {
     ensure_proxy_stdio_host_connection()?;
     daemon::ensure_daemon_running(config_path, None)
@@ -43,10 +44,15 @@ pub async fn serve_cached_toolsets(
                 error,
             )
         })?;
-    let service = SmartProxyMcpServer::new(config_path.to_path_buf(), toolsets, enable_input)
-        .serve(stdio())
-        .await
-        .map_err(map_proxy_serve_error)?;
+    let service = SmartProxyMcpServer::new(
+        config_path.to_path_buf(),
+        toolsets,
+        enable_input,
+        output_toon,
+    )
+    .serve(stdio())
+    .await
+    .map_err(map_proxy_serve_error)?;
     service.waiting().await.map_err(|error| {
         operation_error(
             "mcp.wait",

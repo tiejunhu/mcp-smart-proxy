@@ -9,13 +9,16 @@ use serde_json::{Map as JsonMap, Number, Value as JsonValue};
 use crate::console::operation_error;
 use crate::daemon;
 use crate::paths::{format_path_for_display, sanitize_name};
+use crate::toon::encode_json_to_toon;
 use crate::types::{CachedToolsetRecord, ToolSnapshot};
 
 const TOOL_DESCRIPTION_PREVIEW_CHARS: usize = 80;
 const CLI_USAGE_PREFIX: &str = "msp cli";
+const CLI_USAGE_HELP_PREFIX: &str = "msp cli [--output-toon]";
 
 pub(super) async fn run_mcp_cli_command(
     config_path: &Path,
+    output_toon: bool,
     args: &[OsString],
 ) -> Result<(), Box<dyn Error>> {
     daemon::ensure_daemon_running(config_path, None)
@@ -84,7 +87,7 @@ pub(super) async fn run_mcp_cli_command(
                     error,
                 )
             })?;
-            format_tool_result(&result)?
+            format_tool_result(&result, output_toon)?
         }
     };
 
@@ -143,8 +146,9 @@ fn render_root_help(toolsets: &[CachedToolsetRecord]) -> String {
         .map(|toolset| toolset.name.chars().count())
         .max()
         .unwrap_or(0);
-    let mut output =
-        String::from("Usage: msp cli <mcp-name> <tool-name> [--<parameter> <value>]\n\n");
+    let mut output = String::from(
+        "Usage: msp cli [--output-toon] <mcp-name> <tool-name> [--<parameter> <value>]\n\n",
+    );
 
     if toolsets.is_empty() {
         output.push_str("MCP servers:\n  none  No cached MCP servers available yet.\n");
@@ -175,7 +179,7 @@ fn render_toolset_help(toolset: &CachedToolsetRecord) -> String {
     let mut output = format!(
         "{}\n\nUsage: {} {} <tool-name> [--<parameter> <value>]\n\nTools:\n",
         normalize_description(&toolset.summary),
-        CLI_USAGE_PREFIX,
+        CLI_USAGE_HELP_PREFIX,
         toolset.name
     );
 
@@ -276,7 +280,16 @@ fn resolve_tool<'a>(
         })
 }
 
-fn format_tool_result(result: &CallToolResult) -> Result<String, Box<dyn Error>> {
+fn format_tool_result(
+    result: &CallToolResult,
+    output_toon: bool,
+) -> Result<String, Box<dyn Error>> {
+    if output_toon && let Some(structured_content) = result.structured_content.as_ref() {
+        let toon = encode_json_to_toon(structured_content)
+            .map_err(|error| format!("failed to encode structured tool result as TOON: {error}"))?;
+        return Ok(format!("{toon}\n"));
+    }
+
     let payload = serde_json::to_value(result)
         .map_err(|error| format!("failed to serialize tool result: {error}"))?;
     let rendered = display_tool_result(&payload);
@@ -413,7 +426,7 @@ fn render_tool_help(toolset: &CachedToolsetRecord, tool: &ToolSnapshot) -> Strin
     };
     output.push_str(&format!(
         "Usage: {} {} {}{}\n",
-        CLI_USAGE_PREFIX, toolset.name, tool.name, usage_suffix
+        CLI_USAGE_HELP_PREFIX, toolset.name, tool.name, usage_suffix
     ));
 
     if !parameters.is_empty() {
@@ -1004,7 +1017,9 @@ mod tests {
         let toolsets = sample_toolsets();
         let help = render_tool_help(&toolsets[0], &toolsets[0].tools[0]);
 
-        assert!(help.contains("Usage: msp cli alpha search [--<parameter> <value>]"));
+        assert!(
+            help.contains("Usage: msp cli [--output-toon] alpha search [--<parameter> <value>]")
+        );
         assert!(help.contains("--query <STRING>"));
         assert!(help.contains("[required]"));
     }
@@ -1025,8 +1040,32 @@ mod tests {
         }))
         .unwrap();
 
-        let output = format_tool_result(&result).unwrap();
+        let output = format_tool_result(&result, false).unwrap();
 
         assert_eq!(output, "{\n  \"name\": \"alice\"\n}\n");
+    }
+
+    #[test]
+    fn formats_structured_content_as_toon_when_requested() {
+        let result: CallToolResult = serde_json::from_value(json!({
+            "content": [
+                {
+                    "type": "text",
+                    "text": "{\"users\":[{\"id\":1,\"name\":\"Alice\"},{\"id\":2,\"name\":\"Bob\"}]}"
+                }
+            ],
+            "structuredContent": {
+                "users": [
+                    {"id": 1, "name": "Alice"},
+                    {"id": 2, "name": "Bob"}
+                ]
+            },
+            "isError": false
+        }))
+        .unwrap();
+
+        let output = format_tool_result(&result, true).unwrap();
+
+        assert_eq!(output, "users[2]{id,name}:\n  1,Alice\n  2,Bob\n");
     }
 }

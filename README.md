@@ -463,6 +463,8 @@ msp mcp --provider codex
 
 `msp mcp` is a stdio MCP server entrypoint, not an interactive shell command. Start it from an MCP host such as Codex, OpenCode, or Claude Code, or install it with `msp install ...`.
 
+If you want downstream tools that return `structuredContent` to expose compact TOON text instead, start the proxy with `--output-toon`. In that mode, `call_tool_in_additional_mcp` converts the downstream structured JSON to TOON text, replaces the text content with that TOON payload, and clears `structuredContent` before returning the result upstream.
+
 When the proxy starts, `msp mcp --provider ...` serves the currently cached toolsets immediately and asks the shared daemon to refresh every enabled configured server in the background with the selected summary provider. The current stdio session keeps using the startup cache snapshot; refreshed cache is used by later sessions or explicit reloads. Background refresh failures are logged by the daemon and do not block MCP readiness.
 
 ## Inspect and Call Cached MCP Tools from the Terminal
@@ -491,6 +493,12 @@ Call one downstream MCP tool through the shared daemon:
 
 ```bash
 msp cli github search_repositories --query rust --page 1
+```
+
+If you want terminal output in TOON when a downstream tool returns `structuredContent`, add `--output-toon` before the MCP name:
+
+```bash
+msp cli --output-toon github search_repositories --query rust --page 1
 ```
 
 `msp cli` starts or reuses the shared daemon, loads the current cached MCP snapshot through the daemon protocol, and routes the final downstream tool call through the daemon as well.

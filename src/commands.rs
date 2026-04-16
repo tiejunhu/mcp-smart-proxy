@@ -155,8 +155,11 @@ pub async fn run() -> Result<(), Box<dyn Error>> {
         Some(Command::Mcp {
             provider,
             enable_input,
-        }) => run_mcp_command(&config_path, provider, enable_input).await?,
-        Some(Command::Cli(command)) => run_mcp_cli_command(&config_path, &command.args).await?,
+            output_toon,
+        }) => run_mcp_command(&config_path, provider, enable_input, output_toon).await?,
+        Some(Command::Cli(command)) => {
+            run_mcp_cli_command(&config_path, command.output_toon, &command.args).await?
+        }
         Some(Command::Input { command }) => match command {
             InputCommand::Test => run_input_test_command()?,
             InputCommand::Popup => run_input_popup_command()?,
@@ -526,6 +529,7 @@ async fn run_mcp_command(
     config_path: &Path,
     provider_override: Option<ProviderName>,
     enable_input: bool,
+    output_toon: bool,
 ) -> Result<(), Box<dyn Error>> {
     let enable_input = if enable_input && !popup_input_supported() {
         print_app_warning(
@@ -544,7 +548,7 @@ async fn run_mcp_command(
                 error,
             )
         })?;
-    mcp_server::serve_cached_toolsets(config_path, resolved_provider, enable_input)
+    mcp_server::serve_cached_toolsets(config_path, resolved_provider, enable_input, output_toon)
         .await
         .map_err(|error| {
             operation_error(

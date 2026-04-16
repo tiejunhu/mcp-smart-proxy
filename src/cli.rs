@@ -119,6 +119,9 @@ pub enum Command {
         /// Expose popup-based user input tools to the MCP host.
         #[arg(long)]
         enable_input: bool,
+        /// Render structured downstream tool results as TOON text content.
+        #[arg(long)]
+        output_toon: bool,
     },
     /// Call cached MCP tools from the terminal through the shared daemon.
     Cli(McpCliCommand),
@@ -149,6 +152,9 @@ pub enum DaemonCommand {
 #[derive(Debug, Clone, Args)]
 #[command(disable_help_flag = true, trailing_var_arg = true)]
 pub struct McpCliCommand {
+    #[arg(long)]
+    pub output_toon: bool,
+
     #[arg(value_name = "ARGS", allow_hyphen_values = true)]
     pub args: Vec<OsString>,
 }
@@ -468,9 +474,11 @@ mod tests {
             Some(Command::Mcp {
                 provider,
                 enable_input,
+                output_toon,
             }) => {
                 assert!(matches!(provider, Some(ProviderName::Codex)));
                 assert!(!enable_input);
+                assert!(!output_toon);
             }
             other => panic!("expected mcp command, got {other:?}"),
         }
@@ -484,9 +492,29 @@ mod tests {
             Some(Command::Mcp {
                 provider,
                 enable_input,
+                output_toon,
             }) => {
                 assert!(provider.is_none());
                 assert!(enable_input);
+                assert!(!output_toon);
+            }
+            other => panic!("expected mcp command, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_mcp_with_output_toon() {
+        let cli = Cli::parse_from(["msp", "mcp", "--output-toon"]);
+
+        match cli.command {
+            Some(Command::Mcp {
+                provider,
+                enable_input,
+                output_toon,
+            }) => {
+                assert!(provider.is_none());
+                assert!(!enable_input);
+                assert!(output_toon);
             }
             other => panic!("expected mcp command, got {other:?}"),
         }
@@ -498,7 +526,24 @@ mod tests {
 
         match cli.command {
             Some(Command::Cli(command)) => {
+                assert!(!command.output_toon);
                 assert_eq!(command.args, vec![OsString::from("-h")]);
+            }
+            other => panic!("expected cli command, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_cli_with_output_toon_flag() {
+        let cli = Cli::parse_from(["msp", "cli", "--output-toon", "github", "search"]);
+
+        match cli.command {
+            Some(Command::Cli(command)) => {
+                assert!(command.output_toon);
+                assert_eq!(
+                    command.args,
+                    vec![OsString::from("github"), OsString::from("search")]
+                );
             }
             other => panic!("expected cli command, got {other:?}"),
         }

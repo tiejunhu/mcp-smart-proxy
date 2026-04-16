@@ -13,6 +13,7 @@ mod mcp_server;
 mod paths;
 mod reload;
 mod remote;
+mod toon;
 mod types;
 mod version_check;
 

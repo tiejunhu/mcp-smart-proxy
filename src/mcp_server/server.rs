@@ -13,6 +13,7 @@ use serde_json::{Map as JsonMap, Value as JsonValue};
 
 use crate::daemon;
 use crate::input_popup::{PopupInputRequest, request_user_input_in_popup};
+use crate::toon::rewrite_call_tool_result_to_toon;
 use crate::types::CachedToolsetRecord;
 
 use super::tools::{
@@ -27,6 +28,7 @@ use super::tools::{
 pub(super) struct SmartProxyMcpServer {
     config_path: PathBuf,
     input_enabled: bool,
+    output_toon: bool,
     tools: ToolCatalog,
     toolsets: Vec<CachedToolsetRecord>,
 }
@@ -36,11 +38,13 @@ impl SmartProxyMcpServer {
         config_path: PathBuf,
         toolsets: Vec<CachedToolsetRecord>,
         input_enabled: bool,
+        output_toon: bool,
     ) -> Self {
         let tools = ToolCatalog::new(&toolsets, input_enabled);
         Self {
             config_path,
             input_enabled,
+            output_toon,
             tools,
             toolsets,
         }
@@ -105,7 +109,7 @@ impl SmartProxyMcpServer {
         tool_name: String,
         arguments: Option<JsonMap<String, JsonValue>>,
     ) -> Result<CallToolResult, McpError> {
-        daemon::call_tool(
+        let result = daemon::call_tool(
             &self.config_path,
             None,
             &toolset.name,
@@ -113,7 +117,14 @@ impl SmartProxyMcpServer {
             arguments,
         )
         .await
-        .map_err(|error| McpError::internal_error(error.to_string(), None))
+        .map_err(|error| McpError::internal_error(error.to_string(), None))?;
+
+        if self.output_toon {
+            return rewrite_call_tool_result_to_toon(&result)
+                .map_err(|error| McpError::internal_error(error.to_string(), None));
+        }
+
+        Ok(result)
     }
 }
 
