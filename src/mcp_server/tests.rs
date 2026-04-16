@@ -11,12 +11,10 @@ use crate::types::{CachedTools, CachedToolsetRecord, ToolSnapshot};
 use super::cache::load_cached_toolsets_from_home;
 use super::lua_eval::EVAL_LUA_SCRIPT_NAME;
 use super::tools::{
-    ACTIVATE_ADDITIONAL_MCP_NAME, ACTIVATE_TOOL_IN_ADDITIONAL_MCP_NAME,
-    CALL_TOOL_IN_ADDITIONAL_MCP_NAME, REQUEST_USER_INPUT_IN_POPUP_NAME,
-    STDIO_HOST_REQUIRED_MESSAGE, ToolCatalog, build_activate_tool_description,
-    build_activate_tool_detail_result, build_activate_tool_result,
-    call_tool_in_additional_mcp_definition, parse_tool_arguments_json, parse_tool_request,
-    request_user_input_in_popup_definition, resolve_toolset_name,
+    ACTIVATE_ADDITIONAL_MCPS_NAME, ACTIVATE_TOOLS_IN_ADDITIONAL_MCP_NAME,
+    CALL_TOOL_IN_ADDITIONAL_MCP_NAME, STDIO_HOST_REQUIRED_MESSAGE, ToolCatalog,
+    build_activate_tool_description, build_activate_tool_detail_result, build_activate_tool_result,
+    call_tool_in_additional_mcp_definition, parse_tool_arguments_json, resolve_toolset_name,
 };
 use super::validate_proxy_stdio_launch;
 
@@ -190,13 +188,13 @@ fn activate_tool_returns_only_tools() {
         vec![tool_snapshot("search", Some("Search things"))],
     );
 
-    let result = build_activate_tool_result(&toolset);
+    let result = build_activate_tool_result(&[&toolset]);
 
     assert_eq!(result.structured_content, None);
     assert_eq!(result.content.len(), 1);
     assert_eq!(
         result.content[0].as_text().unwrap().text,
-        "search: Search things"
+        "[alpha]\nsearch: Search things"
     );
 }
 
@@ -213,13 +211,13 @@ fn activate_tool_truncates_tool_description_to_80_characters_with_ellipsis() {
         )],
     );
 
-    let result = build_activate_tool_result(&toolset);
+    let result = build_activate_tool_result(&[&toolset]);
 
     assert_eq!(result.structured_content, None);
     assert_eq!(result.content.len(), 1);
     assert_eq!(
         result.content[0].as_text().unwrap().text,
-        "search: 12345678901234567890123456789012345678901234567890123456789012345678901234567..."
+        "[alpha]\nsearch: 12345678901234567890123456789012345678901234567890123456789012345678901234567..."
     );
 }
 
@@ -227,35 +225,74 @@ fn activate_tool_truncates_tool_description_to_80_characters_with_ellipsis() {
 fn activate_tool_returns_name_only_when_description_is_missing() {
     let toolset = cached_stdio_toolset("alpha", "Use Alpha.", vec![tool_snapshot("search", None)]);
 
-    let result = build_activate_tool_result(&toolset);
+    let result = build_activate_tool_result(&[&toolset]);
 
     assert_eq!(result.structured_content, None);
     assert_eq!(result.content.len(), 1);
-    assert_eq!(result.content[0].as_text().unwrap().text, "search");
+    assert_eq!(result.content[0].as_text().unwrap().text, "[alpha]\nsearch");
 }
 
 #[test]
-fn activate_tool_detail_returns_full_tool_definition() {
-    let tool = tool_snapshot("search", Some("Search things"));
+fn activate_tool_returns_multiple_toolsets_in_request_order() {
+    let alpha = cached_stdio_toolset(
+        "alpha",
+        "Use Alpha.",
+        vec![tool_snapshot("search", Some("Search things"))],
+    );
+    let beta = cached_stdio_toolset(
+        "beta",
+        "Use Beta.",
+        vec![tool_snapshot("list", Some("List things"))],
+    );
 
-    let result = build_activate_tool_detail_result(&tool);
+    let result = build_activate_tool_result(&[&beta, &alpha]);
+
+    assert_eq!(result.structured_content, None);
+    assert_eq!(result.content.len(), 1);
+    assert_eq!(
+        result.content[0].as_text().unwrap().text,
+        "[beta]\nlist: List things\n\n[alpha]\nsearch: Search things"
+    );
+}
+
+#[test]
+fn activate_tool_detail_returns_full_tool_definitions() {
+    let search = tool_snapshot("search", Some("Search things"));
+    let list = tool_snapshot("list", Some("List things"));
+
+    let result = build_activate_tool_detail_result(&[&search, &list]);
 
     assert_eq!(
         result.structured_content,
         Some(json!({
-            "tool": {
-                "name": "search",
-                "title": "Search",
-                "description": "Search things",
-                "input_schema": {
-                    "type": "object"
+            "tools": [
+                {
+                    "name": "search",
+                    "title": "Search",
+                    "description": "Search things",
+                    "input_schema": {
+                        "type": "object"
+                    },
+                    "output_schema": null,
+                    "annotations": null,
+                    "execution": null,
+                    "icons": null,
+                    "meta": null
                 },
-                "output_schema": null,
-                "annotations": null,
-                "execution": null,
-                "icons": null,
-                "meta": null
-            }
+                {
+                    "name": "list",
+                    "title": "Search",
+                    "description": "List things",
+                    "input_schema": {
+                        "type": "object"
+                    },
+                    "output_schema": null,
+                    "annotations": null,
+                    "execution": null,
+                    "icons": null,
+                    "meta": null
+                }
+            ]
         }))
     );
 }
@@ -302,8 +339,50 @@ fn call_tool_definition_contains_expected_fields() {
 }
 
 #[test]
+fn activate_additional_mcps_definition_contains_expected_fields() {
+    let catalog = ToolCatalog::new(&[]);
+    let tool = catalog.get(ACTIVATE_ADDITIONAL_MCPS_NAME).unwrap();
+    let properties = tool
+        .input_schema
+        .get("properties")
+        .and_then(JsonValue::as_object)
+        .unwrap();
+    let required = tool
+        .input_schema
+        .get("required")
+        .and_then(JsonValue::as_array)
+        .unwrap();
+
+    assert!(properties.contains_key("external_mcp_names"));
+    assert_eq!(required, &vec![json!("external_mcp_names")]);
+}
+
+#[test]
+fn activate_tools_in_additional_mcp_definition_contains_expected_fields() {
+    let catalog = ToolCatalog::new(&[]);
+    let tool = catalog.get(ACTIVATE_TOOLS_IN_ADDITIONAL_MCP_NAME).unwrap();
+    let properties = tool
+        .input_schema
+        .get("properties")
+        .and_then(JsonValue::as_object)
+        .unwrap();
+    let required = tool
+        .input_schema
+        .get("required")
+        .and_then(JsonValue::as_array)
+        .unwrap();
+
+    assert!(properties.contains_key("external_mcp_name"));
+    assert!(properties.contains_key("tool_names"));
+    assert_eq!(
+        required,
+        &vec![json!("external_mcp_name"), json!("tool_names")]
+    );
+}
+
+#[test]
 fn eval_lua_script_definition_contains_expected_fields() {
-    let catalog = ToolCatalog::new(&[], false);
+    let catalog = ToolCatalog::new(&[]);
     let tool = catalog.get(EVAL_LUA_SCRIPT_NAME).unwrap();
     let properties = tool
         .input_schema
@@ -322,103 +401,12 @@ fn eval_lua_script_definition_contains_expected_fields() {
 }
 
 #[test]
-fn popup_input_tool_definition_contains_questions_schema() {
-    let tool = request_user_input_in_popup_definition();
-    let properties = tool
-        .input_schema
-        .get("properties")
-        .and_then(JsonValue::as_object)
-        .unwrap();
-    let question_schema = properties
-        .get("questions")
-        .and_then(|questions| questions.get("items"))
-        .and_then(JsonValue::as_object)
-        .unwrap();
-    let question_properties = question_schema
-        .get("properties")
-        .and_then(JsonValue::as_object)
-        .unwrap();
-    let question_required = question_schema
-        .get("required")
-        .and_then(JsonValue::as_array)
-        .unwrap();
-
-    assert_eq!(tool.name.as_ref(), REQUEST_USER_INPUT_IN_POPUP_NAME);
-    assert!(properties.contains_key("questions"));
-    assert!(!question_properties.contains_key("header"));
-    assert_eq!(
-        question_required,
-        &vec![json!("id"), json!("question"), json!("options")]
-    );
-}
-
-#[test]
-fn popup_input_tool_rejects_removed_header_field() {
-    let arguments = json!({
-        "questions": [
-            {
-                "id": "delivery_strategy",
-                "header": "Strategy",
-                "question": "Pick one",
-                "options": [
-                    {
-                        "label": "Fast path",
-                        "description": "Prefer the quickest option."
-                    }
-                ]
-            }
-        ]
-    });
-
-    let error = parse_tool_request::<crate::input_popup::PopupInputRequest>(
-        REQUEST_USER_INPUT_IN_POPUP_NAME,
-        arguments.as_object().unwrap().clone(),
-    )
-    .expect_err("popup tool arguments should reject the removed header field");
-
-    assert!(error.message.contains("unknown field `header`"));
-}
-
-#[test]
-fn tool_catalog_hides_popup_input_tool_when_disabled() {
-    let catalog = ToolCatalog::new(&[], false);
-
-    assert!(
-        catalog
-            .list()
-            .iter()
-            .all(|tool| tool.name.as_ref() != REQUEST_USER_INPUT_IN_POPUP_NAME)
-    );
-    assert!(catalog.get(REQUEST_USER_INPUT_IN_POPUP_NAME).is_none());
-}
-
-#[test]
-fn tool_catalog_exposes_popup_input_tool_when_enabled() {
-    let catalog = ToolCatalog::new(&[], true);
-
-    assert!(
-        catalog
-            .list()
-            .iter()
-            .any(|tool| tool.name.as_ref() == REQUEST_USER_INPUT_IN_POPUP_NAME)
-    );
-    assert_eq!(
-        catalog
-            .get(REQUEST_USER_INPUT_IN_POPUP_NAME)
-            .as_ref()
-            .map(|tool| tool.name.as_ref()),
-        Some(REQUEST_USER_INPUT_IN_POPUP_NAME)
-    );
-}
-
-#[test]
 fn proxy_tools_set_explicit_annotation_hints() {
-    let catalog = ToolCatalog::new(&[], true);
-    let activate_tool = catalog.get(ACTIVATE_ADDITIONAL_MCP_NAME).unwrap();
-    let activate_tool_detail = catalog.get(ACTIVATE_TOOL_IN_ADDITIONAL_MCP_NAME).unwrap();
+    let catalog = ToolCatalog::new(&[]);
+    let activate_tool = catalog.get(ACTIVATE_ADDITIONAL_MCPS_NAME).unwrap();
+    let activate_tool_detail = catalog.get(ACTIVATE_TOOLS_IN_ADDITIONAL_MCP_NAME).unwrap();
     let call_tool = catalog.get(CALL_TOOL_IN_ADDITIONAL_MCP_NAME).unwrap();
     let eval_lua_script = catalog.get(EVAL_LUA_SCRIPT_NAME).unwrap();
-    let popup_tool = catalog.get(REQUEST_USER_INPUT_IN_POPUP_NAME).unwrap();
 
     assert_eq!(
         activate_tool.annotations,
@@ -446,14 +434,6 @@ fn proxy_tools_set_explicit_annotation_hints() {
     );
     assert_eq!(
         eval_lua_script.annotations,
-        Some(
-            rmcp::model::ToolAnnotations::new()
-                .read_only(false)
-                .destructive(false)
-        )
-    );
-    assert_eq!(
-        popup_tool.annotations,
         Some(
             rmcp::model::ToolAnnotations::new()
                 .read_only(false)

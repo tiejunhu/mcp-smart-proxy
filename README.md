@@ -20,11 +20,10 @@ The installed binary name is `msp`. Running `msp` without arguments shows the to
 1. Connects to each configured MCP server and caches its tool metadata.
 2. Generates a short summary for each server by using a configured provider: `codex`, `opencode`, or `claude`.
 3. Starts a stdio MCP proxy that exposes these proxy tools:
-   - `activate_additional_mcp`
-   - `activate_tool_in_additional_mcp`
+  - `activate_additional_mcps`
+  - `activate_tools_in_additional_mcp`
    - `call_tool_in_additional_mcp`
   - `eval_lua_script`
-   - `request_user_input_in_popup` when started with `msp mcp --enable-input`
 
 Agents first inspect the cached server index, optionally inspect one tool definition, and then call the downstream tool through the proxy.
 
@@ -41,7 +40,6 @@ The default daemon socket lives under `~/.cache/mcp-smart-proxy/` and uses a sho
 - The `opencode` CLI when using `--provider opencode`
 - The `claude` CLI when using `--provider claude`
 - A browser session for remote MCP servers that require OAuth login
-- A macOS desktop session when using popup input dialogs
 
 ## Install
 
@@ -242,22 +240,6 @@ msp reload --provider codex
 ```
 
 `reload` fetches the downstream tool list, compares it to the cache, and only regenerates the summary when the tool list changed.
-
-### Test popup input
-
-Open a sample popup dialog locally:
-
-```bash
-msp input test
-```
-
-The MCP tool `request_user_input_in_popup` is exposed only when the host starts `msp mcp --enable-input`. On macOS it uses an embedded Swift/AppKit helper, presents questions in grouped cards with larger click targets, keeps a short header that explains the interaction model, sizes the window to its content up to a maximum height of 800 points, scrolls only the content area when that limit is exceeded, remembers the last closed window position and restores it on the next dialog when that position is still visibly on-screen, falls back to the default placement when that saved position is no longer visible, opens as a normal window instead of staying frontmost so system overlays such as input method candidate panels remain visible, unlocks one question at a time while the timer is active, keeps the timer focused on the current unanswered question, starts that timer target with a 120-second countdown, lets you turn off auto-select explicitly from the header, clears dialog focus when that stop control is used, also permanently disables that countdown after the first keyboard or mouse input anywhere in the dialog, automatically selects the first option when the countdown expires without user interaction, then moves the timer target to the next unanswered question, and switches to a fully manual mode with one neutral question style once the timer is off. In that manual mode every question stays editable, active/answered/pending visual states disappear, clicks and dialog-wide shortcuts can both retarget pending or previously answered questions for edits, a footer primary action stays available so custom `Other` text can be submitted without relying on Return, the final unanswered confirmation still completes the dialog, the helper always appends a final `Other` option, assigns dialog-wide `1-9a-z` shortcuts in display order until the shortcut set is exhausted, confirms `Other` with Return, returns one answer per question, and returns an empty `answers` object when the user chooses `Send Empty Answer`, cancels, or closes the dialog.
-
-The released `msp` binary still ships as a single executable. On macOS, `msp` extracts the embedded popup helper into `~/.cache/mcp-smart-proxy/popup-input/` on first use and reuses it for later dialogs.
-
-Popup input dialogs are currently supported only on macOS. Linux builds do not include the popup helper, so they build cleanly in headless environments and ignore `msp mcp --enable-input`.
-
-When building from source on macOS, popup input requires `xcrun swiftc` so Cargo can compile the helper during the build.
 
 ### Run Lua automation through the proxy
 
@@ -539,33 +521,37 @@ Background self-update requires write access to the installed `msp` binary path.
 
 ## Proxy Tool Contract
 
-### `activate_additional_mcp`
+### `activate_additional_mcps`
 
 Input:
 
 ```json
 {
-  "external_mcp_name": "github"
+  "external_mcp_names": ["github", "filesystem"]
 }
 ```
 
 Output:
 
 ```text
+[github]
 example_tool: Example description
 another_tool: Another description that is longer but still fits in the preview
+
+[filesystem]
+read_file: Read the contents of a file
 ```
 
-Each output line is `tool_name: description-preview`. If a tool has no description, the line is just `tool_name`.
+Each section starts with `[mcp_name]`. Within a section, each output line is `tool_name: description-preview`. If a tool has no description, the line is just `tool_name`.
 
-### `activate_tool_in_additional_mcp`
+### `activate_tools_in_additional_mcp`
 
 Input:
 
 ```json
 {
   "external_mcp_name": "github",
-  "tool_name": "example_tool"
+  "tool_names": ["example_tool", "another_tool"]
 }
 ```
 
@@ -573,12 +559,20 @@ Output:
 
 ```json
 {
-  "tool": {
-    "name": "example_tool",
-    "title": "Example Tool",
-    "description": "Example description",
-    "input_schema": {}
-  }
+  "tools": [
+    {
+      "name": "example_tool",
+      "title": "Example Tool",
+      "description": "Example description",
+      "input_schema": {}
+    },
+    {
+      "name": "another_tool",
+      "title": "Another Tool",
+      "description": "Another example",
+      "input_schema": {}
+    }
+  ]
 }
 ```
 

@@ -5,28 +5,26 @@ use rmcp::{
 use serde::{Deserialize, de::DeserializeOwned};
 use serde_json::{Map as JsonMap, Value as JsonValue, json};
 
-use crate::input_popup::popup_input_schema;
 use crate::paths::sanitize_name;
 use crate::types::{CachedToolsetRecord, ToolSnapshot};
 
 use super::lua_eval::EVAL_LUA_SCRIPT_NAME;
 
-pub(super) const ACTIVATE_ADDITIONAL_MCP_NAME: &str = "activate_additional_mcp";
-pub(super) const ACTIVATE_TOOL_IN_ADDITIONAL_MCP_NAME: &str = "activate_tool_in_additional_mcp";
+pub(super) const ACTIVATE_ADDITIONAL_MCPS_NAME: &str = "activate_additional_mcps";
+pub(super) const ACTIVATE_TOOLS_IN_ADDITIONAL_MCP_NAME: &str = "activate_tools_in_additional_mcp";
 pub(super) const CALL_TOOL_IN_ADDITIONAL_MCP_NAME: &str = "call_tool_in_additional_mcp";
 pub(super) const EVAL_LUA_SCRIPT_DESCRIPTION: &str = "Evaluate a Lua 5.5 script. The script can call any activated MCP tools through the async `call_mcp_tool(mcp_name, tool_name, args)` helper, where `args` must be a Lua table that maps to a JSON object or nil.";
-pub(super) const REQUEST_USER_INPUT_IN_POPUP_NAME: &str = "request_user_input_in_popup";
 pub(super) const STDIO_HOST_REQUIRED_MESSAGE: &str = "`msp mcp` is a stdio MCP server and must be started by an MCP client such as Codex, OpenCode, or Claude Code instead of running directly in a terminal";
 
 #[derive(Debug, Deserialize)]
-pub(super) struct ActivateAdditionalMcpRequest {
-    pub(super) external_mcp_name: String,
+pub(super) struct ActivateAdditionalMcpsRequest {
+    pub(super) external_mcp_names: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
-pub(super) struct ActivateToolInAdditionalMcpRequest {
+pub(super) struct ActivateToolsInAdditionalMcpRequest {
     pub(super) external_mcp_name: String,
-    pub(super) tool_name: String,
+    pub(super) tool_names: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -38,46 +36,39 @@ pub(super) struct CallToolInAdditionalMcpRequest {
 
 #[derive(Clone)]
 pub(super) struct ToolCatalog {
-    activate_tool: Tool,
-    activate_tool_detail: Tool,
+    activate_mcps: Tool,
+    activate_tools: Tool,
     call_tool_in_additional_mcp: Tool,
     eval_lua_script: Tool,
-    request_user_input_in_popup: Option<Tool>,
 }
 
 impl ToolCatalog {
-    pub(super) fn new(toolsets: &[CachedToolsetRecord], enable_input: bool) -> Self {
+    pub(super) fn new(toolsets: &[CachedToolsetRecord]) -> Self {
         Self {
-            activate_tool: activate_tool_definition(toolsets),
-            activate_tool_detail: activate_tool_in_additional_mcp_definition(),
+            activate_mcps: activate_additional_mcps_definition(toolsets),
+            activate_tools: activate_tools_in_additional_mcp_definition(),
             call_tool_in_additional_mcp: call_tool_in_additional_mcp_definition(
                 CALL_TOOL_IN_ADDITIONAL_MCP_NAME,
             ),
             eval_lua_script: eval_lua_script_definition(),
-            request_user_input_in_popup: enable_input.then(request_user_input_in_popup_definition),
         }
     }
 
     pub(super) fn list(&self) -> Vec<Tool> {
-        let mut tools = vec![
-            self.activate_tool.clone(),
-            self.activate_tool_detail.clone(),
+        vec![
+            self.activate_mcps.clone(),
+            self.activate_tools.clone(),
             self.call_tool_in_additional_mcp.clone(),
             self.eval_lua_script.clone(),
-        ];
-        if let Some(tool) = &self.request_user_input_in_popup {
-            tools.push(tool.clone());
-        }
-        tools
+        ]
     }
 
     pub(super) fn get(&self, name: &str) -> Option<Tool> {
         match name {
-            ACTIVATE_ADDITIONAL_MCP_NAME => Some(self.activate_tool.clone()),
-            ACTIVATE_TOOL_IN_ADDITIONAL_MCP_NAME => Some(self.activate_tool_detail.clone()),
+            ACTIVATE_ADDITIONAL_MCPS_NAME => Some(self.activate_mcps.clone()),
+            ACTIVATE_TOOLS_IN_ADDITIONAL_MCP_NAME => Some(self.activate_tools.clone()),
             CALL_TOOL_IN_ADDITIONAL_MCP_NAME => Some(self.call_tool_in_additional_mcp.clone()),
             EVAL_LUA_SCRIPT_NAME => Some(self.eval_lua_script.clone()),
-            REQUEST_USER_INPUT_IN_POPUP_NAME => self.request_user_input_in_popup.clone(),
             _ => None,
         }
     }
@@ -131,15 +122,6 @@ pub(super) fn call_tool_in_additional_mcp_definition(name: &'static str) -> Tool
     .with_annotations(proxy_tool_annotations(false))
 }
 
-pub(super) fn request_user_input_in_popup_definition() -> Tool {
-    Tool::new(
-        REQUEST_USER_INPUT_IN_POPUP_NAME,
-        "Request user input through a popup. When you need to ask the user for input on some question and don't have other tools, use this one.",
-        object(popup_input_schema()),
-    )
-    .with_annotations(proxy_tool_annotations(false))
-}
-
 pub(super) fn eval_lua_script_definition() -> Tool {
     Tool::new(
         EVAL_LUA_SCRIPT_NAME,
@@ -187,19 +169,22 @@ pub(super) fn parse_tool_request<T: DeserializeOwned>(
     })
 }
 
-pub(super) fn build_activate_tool_result(toolset: &CachedToolsetRecord) -> CallToolResult {
-    let content = toolset
-        .tools
+pub(super) fn build_activate_tool_result(toolsets: &[&CachedToolsetRecord]) -> CallToolResult {
+    let content = toolsets
         .iter()
-        .map(format_activate_tool_line)
+        .map(|toolset| {
+            let mut lines = vec![format!("[{}]", toolset.name)];
+            lines.extend(toolset.tools.iter().map(format_activate_tool_line));
+            lines.join("\n")
+        })
         .collect::<Vec<_>>()
-        .join("\n");
+        .join("\n\n");
     CallToolResult::success(vec![Content::text(content)])
 }
 
-pub(super) fn build_activate_tool_detail_result(tool: &ToolSnapshot) -> CallToolResult {
+pub(super) fn build_activate_tool_detail_result(tools: &[&ToolSnapshot]) -> CallToolResult {
     CallToolResult::structured(json!({
-        "tool": tool,
+        "tools": tools,
     }))
 }
 
@@ -254,29 +239,33 @@ pub(super) fn resolve_tool_snapshot_or_error<'a>(
     })
 }
 
-fn activate_tool_definition(toolsets: &[CachedToolsetRecord]) -> Tool {
+fn activate_additional_mcps_definition(toolsets: &[CachedToolsetRecord]) -> Tool {
     Tool::new(
-        ACTIVATE_ADDITIONAL_MCP_NAME,
+        ACTIVATE_ADDITIONAL_MCPS_NAME,
         build_activate_tool_description(toolsets),
         object(json!({
             "type": "object",
             "properties": {
-                "external_mcp_name": {
-                    "type": "string",
-                    "description": "The MCP server name to activate."
+                "external_mcp_names": {
+                    "type": "array",
+                    "description": "The MCP server names to activate.",
+                    "items": {
+                        "type": "string"
+                    },
+                    "minItems": 1
                 }
             },
-            "required": ["external_mcp_name"],
+            "required": ["external_mcp_names"],
             "additionalProperties": false
         })),
     )
     .with_annotations(proxy_tool_annotations(true))
 }
 
-fn activate_tool_in_additional_mcp_definition() -> Tool {
+fn activate_tools_in_additional_mcp_definition() -> Tool {
     Tool::new(
-        ACTIVATE_TOOL_IN_ADDITIONAL_MCP_NAME,
-        "Return the full definition of one tool exposed by an additional MCP server, use this tool before calling call_tool_in_additional_mcp",
+        ACTIVATE_TOOLS_IN_ADDITIONAL_MCP_NAME,
+        "Return the full definitions of one or more tools exposed by an additional MCP server, use this tool before calling call_tool_in_additional_mcp",
         object(json!({
             "type": "object",
             "properties": {
@@ -284,12 +273,16 @@ fn activate_tool_in_additional_mcp_definition() -> Tool {
                     "type": "string",
                     "description": "The external MCP server name."
                 },
-                "tool_name": {
-                    "type": "string",
-                    "description": "The tool name exposed by that external MCP server."
+                "tool_names": {
+                    "type": "array",
+                    "description": "The tool names exposed by that external MCP server.",
+                    "items": {
+                        "type": "string"
+                    },
+                    "minItems": 1
                 }
             },
-            "required": ["external_mcp_name", "tool_name"],
+            "required": ["external_mcp_name", "tool_names"],
             "additionalProperties": false
         })),
     )

@@ -116,20 +116,12 @@ pub enum Command {
     Mcp {
         #[arg(long, value_enum)]
         provider: Option<ProviderName>,
-        /// Expose popup-based user input tools to the MCP host.
-        #[arg(long)]
-        enable_input: bool,
         /// Render structured downstream tool results as TOON text content.
         #[arg(long)]
         output_toon: bool,
     },
     /// Call cached MCP tools from the terminal through the shared daemon.
     Cli(McpCliCommand),
-    /// Open popup-based interactive input helpers.
-    Input {
-        #[command(subcommand)]
-        command: InputCommand,
-    },
     /// Manage the shared background daemon.
     Daemon {
         #[arg(long, value_name = "PATH")]
@@ -157,14 +149,6 @@ pub struct McpCliCommand {
 
     #[arg(value_name = "ARGS", allow_hyphen_values = true)]
     pub args: Vec<OsString>,
-}
-
-#[derive(Debug, Clone, Subcommand)]
-pub enum InputCommand {
-    /// Open a sample popup dialog for manual testing.
-    Test,
-    #[command(hide = true)]
-    Popup,
 }
 
 #[derive(Debug, Clone, ValueEnum)]
@@ -369,18 +353,6 @@ mod tests {
     }
 
     #[test]
-    fn parses_input_test_command() {
-        let cli = Cli::parse_from(["msp", "input", "test"]);
-
-        match cli.command {
-            Some(Command::Input { command }) => {
-                assert!(matches!(command, InputCommand::Test));
-            }
-            other => panic!("expected input command, got {other:?}"),
-        }
-    }
-
-    #[test]
     fn parses_install_codex_target() {
         let cli = Cli::parse_from(["msp", "install", "codex"]);
 
@@ -473,29 +445,9 @@ mod tests {
         match cli.command {
             Some(Command::Mcp {
                 provider,
-                enable_input,
                 output_toon,
             }) => {
                 assert!(matches!(provider, Some(ProviderName::Codex)));
-                assert!(!enable_input);
-                assert!(!output_toon);
-            }
-            other => panic!("expected mcp command, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn parses_mcp_with_enable_input() {
-        let cli = Cli::parse_from(["msp", "mcp", "--enable-input"]);
-
-        match cli.command {
-            Some(Command::Mcp {
-                provider,
-                enable_input,
-                output_toon,
-            }) => {
-                assert!(provider.is_none());
-                assert!(enable_input);
                 assert!(!output_toon);
             }
             other => panic!("expected mcp command, got {other:?}"),
@@ -509,11 +461,9 @@ mod tests {
         match cli.command {
             Some(Command::Mcp {
                 provider,
-                enable_input,
                 output_toon,
             }) => {
                 assert!(provider.is_none());
-                assert!(!enable_input);
                 assert!(output_toon);
             }
             other => panic!("expected mcp command, got {other:?}"),

@@ -7,14 +7,13 @@ use clap::Parser;
 
 #[cfg(test)]
 use crate::cli::ImportSource;
-use crate::cli::{Cli, Command, DaemonCommand, InputCommand, ProviderName};
+use crate::cli::{Cli, Command, DaemonCommand, ProviderName};
 use crate::config::{
     list_servers, load_config_table, load_server_config, remove_server, set_server_enabled,
     update_server_config,
 };
-use crate::console::{describe_command, operation_error, print_app_event, print_app_warning};
+use crate::console::{describe_command, operation_error, print_app_event};
 use crate::daemon;
-use crate::input_popup::popup_input_supported;
 use crate::mcp_server;
 use crate::paths::{expand_tilde, format_path_for_display};
 use crate::reload::reload_server_with_provider;
@@ -26,7 +25,6 @@ mod add_cmd;
 mod auth_cmd;
 mod config_cmd;
 mod import_cmd;
-mod input_cmd;
 mod mcp_cli;
 mod provider;
 
@@ -34,7 +32,6 @@ use add_cmd::{AddCommandArgs, run_add_command};
 use auth_cmd::{run_login_command, run_logout_command};
 use config_cmd::{ConfigCommandArgs, print_server_config};
 use import_cmd::{run_import_command, run_install_command, run_restore_command};
-use input_cmd::{run_input_popup_command, run_input_test_command};
 use mcp_cli::run_mcp_cli_command;
 use provider::resolve_default_command_provider;
 #[cfg(test)]
@@ -54,11 +51,7 @@ pub async fn run() -> Result<(), Box<dyn Error>> {
         version_check::spawn_periodic_self_update(raw_args.clone());
     } else if !matches!(
         &cli.command,
-        Some(Command::Update)
-            | Some(Command::Daemon { .. })
-            | Some(Command::Input {
-                command: InputCommand::Popup,
-            })
+        Some(Command::Update) | Some(Command::Daemon { .. })
     ) {
         version_check::print_cached_update_notice();
     }
@@ -154,16 +147,11 @@ pub async fn run() -> Result<(), Box<dyn Error>> {
         }) => run_reload_all_command(&config_path, provider).await?,
         Some(Command::Mcp {
             provider,
-            enable_input,
             output_toon,
-        }) => run_mcp_command(&config_path, provider, enable_input, output_toon).await?,
+        }) => run_mcp_command(&config_path, provider, output_toon).await?,
         Some(Command::Cli(command)) => {
             run_mcp_cli_command(&config_path, command.output_toon, &command.args).await?
         }
-        Some(Command::Input { command }) => match command {
-            InputCommand::Test => run_input_test_command()?,
-            InputCommand::Popup => run_input_popup_command()?,
-        },
         Some(Command::Daemon { socket, command }) => {
             run_daemon_command(&config_path, socket.as_deref(), command).await?
         }
@@ -528,18 +516,8 @@ async fn run_reload_all_command(
 async fn run_mcp_command(
     config_path: &Path,
     provider_override: Option<ProviderName>,
-    enable_input: bool,
     output_toon: bool,
 ) -> Result<(), Box<dyn Error>> {
-    let enable_input = if enable_input && !popup_input_supported() {
-        print_app_warning(
-            "cli.mcp.input_disabled",
-            "Popup input is available only on macOS. `msp mcp --enable-input` is ignored on this platform.",
-        );
-        false
-    } else {
-        enable_input
-    };
     let resolved_provider =
         resolve_default_command_provider(provider_override).map_err(|error| {
             operation_error(
@@ -548,7 +526,7 @@ async fn run_mcp_command(
                 error,
             )
         })?;
-    mcp_server::serve_cached_toolsets(config_path, resolved_provider, enable_input, output_toon)
+    mcp_server::serve_cached_toolsets(config_path, resolved_provider, output_toon)
         .await
         .map_err(|error| {
             operation_error(

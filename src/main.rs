@@ -8,7 +8,6 @@ mod daemon;
 mod downstream_client;
 mod env_template;
 mod fs_util;
-mod input_popup;
 mod mcp_server;
 mod paths;
 mod reload;
