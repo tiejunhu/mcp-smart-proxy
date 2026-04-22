@@ -11,7 +11,7 @@ The installed binary name is `msp`. Running `msp` without arguments shows the to
 - Reduce the number of tools your agent sees (reduce the token cost without losing any tool).
 - Cache downstream MCP tool metadata and summaries.
 - Proxy both local stdio MCP servers and remote Streamable HTTP MCP servers.
-- Reuse your existing Codex, OpenCode, or Claude Code MCP setup instead of rebuilding everything from scratch.
+- Reuse your existing Codex, OpenCode, Claude Code, or GitHub Copilot CLI MCP setup instead of rebuilding everything from scratch.
 
 ## How it works
 
@@ -39,6 +39,7 @@ The default daemon socket lives under `~/.cache/mcp-smart-proxy/` and uses a sho
 - The `codex` CLI when using `--provider codex`
 - The `opencode` CLI when using `--provider opencode`
 - The `claude` CLI when using `--provider claude`
+- The `copilot` CLI when using `--provider copilot`
 - A browser session for remote MCP servers that require OAuth login
 
 ## Install
@@ -108,13 +109,14 @@ To add a remote server that needs headers up front:
 msp add --provider codex --url https://example.com/mcp --header Authorization='Bearer ${DEMO_TOKEN}' remote-demo
 ```
 
-### Fastest path for OpenCode or Claude Code
+### Fastest path for OpenCode, Claude Code, or GitHub Copilot CLI
 
 Import existing servers:
 
 ```bash
 msp import opencode
 msp import claude
+msp import copilot
 ```
 
 Install the proxy into the host:
@@ -122,6 +124,7 @@ Install the proxy into the host:
 ```bash
 msp install opencode
 msp install claude
+msp install copilot
 ```
 
 Replace existing host MCP entries and keep a backup:
@@ -129,6 +132,7 @@ Replace existing host MCP entries and keep a backup:
 ```bash
 msp install opencode --replace
 msp install claude --replace
+msp install copilot --replace
 ```
 
 Restore the original host config later if needed:
@@ -136,6 +140,7 @@ Restore the original host config later if needed:
 ```bash
 msp restore opencode
 msp restore claude
+msp restore copilot
 ```
 
 ### Start from scratch

@@ -614,6 +614,13 @@ mod tests {
     }
 
     #[test]
+    fn resolves_import_provider_from_copilot_source_when_override_is_missing() {
+        let provider = resolve_import_provider(None, ImportSource::Copilot).unwrap();
+
+        assert!(matches!(provider, ModelProviderConfig::Copilot(_)));
+    }
+
+    #[test]
     fn accepts_missing_default_command_provider_when_override_is_missing() {
         assert!(resolve_default_command_provider(None).unwrap().is_none());
     }
@@ -630,6 +637,13 @@ mod tests {
         let provider = resolve_install_import_provider(ImportSource::Claude).unwrap();
 
         assert!(matches!(provider, ModelProviderConfig::Claude(_)));
+    }
+
+    #[test]
+    fn resolves_install_import_provider_from_copilot_source() {
+        let provider = resolve_install_import_provider(ImportSource::Copilot).unwrap();
+
+        assert!(matches!(provider, ModelProviderConfig::Copilot(_)));
     }
 
     #[test]

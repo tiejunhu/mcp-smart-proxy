@@ -12,13 +12,17 @@ pub(crate) use self_server::is_self_server_command;
 const DEFAULT_MODEL: &str = "gpt-5.2";
 const DEFAULT_OPENCODE_MODEL: &str = "openai/gpt-5.2";
 const DEFAULT_CLAUDE_MODEL: &str = "sonnet";
+const DEFAULT_COPILOT_MODEL: &str = "gpt-5.2";
 const DEFAULT_CODEX_CONFIG_PATH: &str = "~/.codex/config.toml";
 const DEFAULT_OPENCODE_CONFIG_PATH: &str = "~/.config/opencode/opencode.json";
 const DEFAULT_CLAUDE_CONFIG_PATH: &str = "~/.claude.json";
+const DEFAULT_COPILOT_CONFIG_PATH: &str = "~/.copilot/mcp-config.json";
 const CODEX_HOME_ENV: &str = "CODEX_HOME";
+const COPILOT_HOME_ENV: &str = "COPILOT_HOME";
 const CODEX_PROVIDER_NAME: &str = "codex";
 const OPENCODE_PROVIDER_NAME: &str = "opencode";
 const CLAUDE_PROVIDER_NAME: &str = "claude";
+const COPILOT_PROVIDER_NAME: &str = "copilot";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct StdioServer {
@@ -204,10 +208,11 @@ pub struct RestoreMcpServersResult {
 }
 
 pub use import_export::{
-    install_claude_mcp_server, install_codex_mcp_server, install_opencode_mcp_server,
-    load_claude_servers_for_import, load_codex_servers_for_import,
-    load_opencode_servers_for_import, replace_claude_mcp_servers, replace_codex_mcp_servers,
-    replace_opencode_mcp_servers, restore_claude_mcp_servers, restore_codex_mcp_servers,
+    install_claude_mcp_server, install_codex_mcp_server, install_copilot_mcp_server,
+    install_opencode_mcp_server, load_claude_servers_for_import, load_codex_servers_for_import,
+    load_copilot_servers_for_import, load_opencode_servers_for_import, replace_claude_mcp_servers,
+    replace_codex_mcp_servers, replace_copilot_mcp_servers, replace_opencode_mcp_servers,
+    restore_claude_mcp_servers, restore_codex_mcp_servers, restore_copilot_mcp_servers,
     restore_opencode_mcp_servers,
 };
 pub use local::{
@@ -221,13 +226,15 @@ pub use provider::load_model_provider_config;
 pub(crate) use import_export::{
     collect_remote_header_value_env_vars, load_claude_config,
     load_claude_servers_for_import_from_path, load_codex_servers_for_import_from_path,
-    load_opencode_config, load_opencode_servers_for_import_from_path,
-    replace_claude_mcp_servers_from_path, replace_codex_mcp_servers_from_path,
+    load_copilot_config, load_copilot_servers_for_import_from_path, load_opencode_config,
+    load_opencode_servers_for_import_from_path, replace_claude_mcp_servers_from_path,
+    replace_codex_mcp_servers_from_path, replace_copilot_mcp_servers_from_path,
     replace_opencode_mcp_servers_from_path, restore_claude_mcp_servers_from_path,
-    restore_codex_mcp_servers_from_path, restore_opencode_mcp_servers_from_path,
+    restore_codex_mcp_servers_from_path, restore_copilot_mcp_servers_from_path,
+    restore_opencode_mcp_servers_from_path,
 };
 #[cfg(test)]
-pub(crate) use provider::codex_config_path;
+pub(crate) use provider::{codex_config_path, copilot_config_path};
 
 #[cfg(test)]
 mod tests;

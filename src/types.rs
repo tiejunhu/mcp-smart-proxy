@@ -94,10 +94,16 @@ pub struct ClaudeRuntimeConfig {
 }
 
 #[derive(Debug, Clone)]
+pub struct CopilotRuntimeConfig {
+    pub model: String,
+}
+
+#[derive(Debug, Clone)]
 pub enum ModelProviderConfig {
     Codex(CodexRuntimeConfig),
     Opencode(OpencodeRuntimeConfig),
     Claude(ClaudeRuntimeConfig),
+    Copilot(CopilotRuntimeConfig),
 }
 
 impl ModelProviderConfig {
@@ -106,6 +112,7 @@ impl ModelProviderConfig {
             Self::Codex(_) => "codex",
             Self::Opencode(_) => "opencode",
             Self::Claude(_) => "claude",
+            Self::Copilot(_) => "copilot",
         }
     }
 }

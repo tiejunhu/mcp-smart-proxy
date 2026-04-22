@@ -158,6 +158,7 @@ pub enum ImportSource {
     Codex,
     Opencode,
     Claude,
+    Copilot,
 }
 
 #[derive(Debug, Clone, ValueEnum)]
@@ -165,6 +166,7 @@ pub enum InstallTarget {
     Codex,
     Opencode,
     Claude,
+    Copilot,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
@@ -172,6 +174,7 @@ pub enum ProviderName {
     Codex,
     Opencode,
     Claude,
+    Copilot,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
@@ -195,6 +198,7 @@ impl ProviderName {
             Self::Codex => "codex",
             Self::Opencode => "opencode",
             Self::Claude => "claude",
+            Self::Copilot => "copilot",
         }
     }
 }
@@ -413,6 +417,19 @@ mod tests {
     }
 
     #[test]
+    fn parses_import_copilot_source() {
+        let cli = Cli::parse_from(["msp", "import", "copilot"]);
+
+        match cli.command {
+            Some(Command::Import { provider, source }) => {
+                assert!(provider.is_none());
+                assert!(matches!(source, ImportSource::Copilot));
+            }
+            other => panic!("expected import command, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn parses_install_codex_target() {
         let cli = Cli::parse_from(["msp", "install", "codex"]);
 
@@ -464,12 +481,37 @@ mod tests {
     }
 
     #[test]
+    fn parses_install_copilot_target() {
+        let cli = Cli::parse_from(["msp", "install", "copilot"]);
+
+        match cli.command {
+            Some(Command::Install { replace, target }) => {
+                assert!(!replace);
+                assert!(matches!(target, InstallTarget::Copilot));
+            }
+            other => panic!("expected install command, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn parses_restore_claude_target() {
         let cli = Cli::parse_from(["msp", "restore", "claude"]);
 
         match cli.command {
             Some(Command::Restore { target }) => {
                 assert!(matches!(target, InstallTarget::Claude));
+            }
+            other => panic!("expected restore command, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_restore_copilot_target() {
+        let cli = Cli::parse_from(["msp", "restore", "copilot"]);
+
+        match cli.command {
+            Some(Command::Restore { target }) => {
+                assert!(matches!(target, InstallTarget::Copilot));
             }
             other => panic!("expected restore command, got {other:?}"),
         }
@@ -508,6 +550,22 @@ mod tests {
                 output_toon,
             }) => {
                 assert!(matches!(provider, Some(ProviderName::Codex)));
+                assert!(!output_toon);
+            }
+            other => panic!("expected mcp command, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_mcp_with_copilot_provider_override() {
+        let cli = Cli::parse_from(["msp", "mcp", "--provider", "copilot"]);
+
+        match cli.command {
+            Some(Command::Mcp {
+                provider,
+                output_toon,
+            }) => {
+                assert!(matches!(provider, Some(ProviderName::Copilot)));
                 assert!(!output_toon);
             }
             other => panic!("expected mcp command, got {other:?}"),

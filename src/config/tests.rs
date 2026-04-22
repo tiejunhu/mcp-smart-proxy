@@ -105,6 +105,43 @@ fn resolves_codex_config_path_from_codex_home() {
     }
 }
 
+fn with_copilot_home_env<T>(copilot_home: &Path, test: impl FnOnce() -> T) -> T {
+    let _guard = env_lock().lock().unwrap();
+    let previous_copilot_home = env::var(COPILOT_HOME_ENV).ok();
+
+    unsafe {
+        env::set_var(COPILOT_HOME_ENV, copilot_home);
+    }
+
+    let result = test();
+
+    match previous_copilot_home {
+        Some(value) => unsafe { env::set_var(COPILOT_HOME_ENV, value) },
+        None => unsafe { env::remove_var(COPILOT_HOME_ENV) },
+    }
+
+    result
+}
+
+#[test]
+fn resolves_copilot_config_path_from_copilot_home() {
+    let _guard = env_lock().lock().unwrap();
+    let previous_copilot_home = env::var(COPILOT_HOME_ENV).ok();
+
+    unsafe {
+        env::set_var(COPILOT_HOME_ENV, "/tmp/copilot-home");
+    }
+
+    let path = copilot_config_path().unwrap();
+
+    assert_eq!(path, PathBuf::from("/tmp/copilot-home/mcp-config.json"));
+
+    match previous_copilot_home {
+        Some(value) => unsafe { env::set_var(COPILOT_HOME_ENV, value) },
+        None => unsafe { env::remove_var(COPILOT_HOME_ENV) },
+    }
+}
+
 #[test]
 fn installs_codex_mcp_server_when_missing() {
     let codex_home = unique_test_path("codex-install-home");
@@ -260,6 +297,40 @@ fn installs_claude_mcp_server_when_missing() {
     });
 
     fs::remove_dir_all(home).unwrap();
+}
+
+#[test]
+fn installs_copilot_mcp_server_when_missing() {
+    let copilot_home = unique_test_path("copilot-install-home");
+    fs::create_dir_all(&copilot_home).unwrap();
+
+    with_copilot_home_env(&copilot_home, || {
+        let installed = install_copilot_mcp_server().unwrap();
+
+        assert_eq!(installed.name, "msp");
+        assert_eq!(installed.status, InstallMcpServerStatus::Installed);
+        assert_eq!(installed.config_path, copilot_home.join("mcp-config.json"));
+
+        let contents = fs::read_to_string(&installed.config_path).unwrap();
+        let config: JsonValue = serde_json::from_str(&contents).unwrap();
+        let server = config["mcpServers"]["msp"].as_object().unwrap();
+        assert_eq!(server["type"].as_str(), Some("stdio"));
+        assert_eq!(server["command"].as_str(), Some("msp"));
+        assert_eq!(
+            server["args"].as_array().unwrap(),
+            &vec![
+                JsonValue::String("mcp".to_string()),
+                JsonValue::String("--provider".to_string()),
+                JsonValue::String("copilot".to_string()),
+            ]
+        );
+        assert_eq!(
+            server["tools"].as_array().unwrap(),
+            &vec![JsonValue::String("*".to_string())]
+        );
+    });
+
+    fs::remove_dir_all(copilot_home).unwrap();
 }
 
 #[test]
@@ -505,6 +576,36 @@ fn recognizes_existing_opencode_self_server_with_matching_provider() {
     });
 
     fs::remove_dir_all(home).unwrap();
+}
+
+#[test]
+fn recognizes_existing_copilot_self_server_with_matching_provider() {
+    let copilot_home = unique_test_path("copilot-existing-home");
+    fs::create_dir_all(&copilot_home).unwrap();
+    let config_path = copilot_home.join("mcp-config.json");
+    fs::write(
+        &config_path,
+        r#"{
+                "mcpServers": {
+                    "proxy": {
+                        "type": "stdio",
+                        "command": "msp",
+                        "args": ["mcp", "--provider", "copilot"],
+                        "tools": ["*"]
+                    }
+                }
+            }"#,
+    )
+    .unwrap();
+
+    with_copilot_home_env(&copilot_home, || {
+        let installed = install_copilot_mcp_server().unwrap();
+
+        assert_eq!(installed.name, "proxy");
+        assert_eq!(installed.status, InstallMcpServerStatus::AlreadyInstalled);
+    });
+
+    fs::remove_dir_all(copilot_home).unwrap();
 }
 
 #[test]
@@ -1032,6 +1133,139 @@ fn restore_claude_ignores_self_servers_present_in_backup() {
 }
 
 #[test]
+fn replaces_copilot_servers_after_merging_backup_without_duplicates() {
+    let config_path = unique_test_path("copilot-replace.json");
+    let backup_path = sibling_backup_path(&config_path, "msp-backup");
+    fs::write(
+        &config_path,
+        r#"{
+                "mcpServers": {
+                    "alpha": {
+                        "type": "local",
+                        "command": "npx",
+                        "args": ["-y", "alpha-server"],
+                        "tools": ["*"]
+                    },
+                    "beta": {
+                        "type": "http",
+                        "url": "https://example.com/mcp",
+                        "tools": ["beta-read"]
+                    }
+                }
+            }"#,
+    )
+    .unwrap();
+    fs::write(
+        &backup_path,
+        r#"{
+                "mcpServers": {
+                    "beta": {
+                        "type": "http",
+                        "url": "https://old.example.com/mcp",
+                        "tools": ["old"]
+                    },
+                    "gamma": {
+                        "type": "local",
+                        "command": "uvx",
+                        "args": ["gamma-server"],
+                        "tools": ["*"]
+                    }
+                }
+            }"#,
+    )
+    .unwrap();
+
+    let replaced = replace_copilot_mcp_servers_from_path(&config_path).unwrap();
+
+    assert_eq!(replaced.config_path, config_path);
+    assert_eq!(replaced.backup_path, backup_path);
+    assert_eq!(replaced.backed_up_server_count, 2);
+    assert_eq!(replaced.removed_server_count, 2);
+
+    let config = load_copilot_config(&config_path).unwrap();
+    assert!(config.get("mcpServers").is_none());
+
+    let backup = load_copilot_config(&backup_path).unwrap();
+    let servers = backup["mcpServers"].as_object().unwrap();
+    assert_eq!(servers.len(), 3);
+    assert_eq!(servers["alpha"]["command"].as_str(), Some("npx"));
+    assert_eq!(
+        servers["beta"]["url"].as_str(),
+        Some("https://example.com/mcp")
+    );
+    assert!(servers.get("gamma").is_some());
+
+    fs::remove_file(config_path).unwrap();
+    fs::remove_file(backup_path).unwrap();
+}
+
+#[test]
+fn restores_copilot_servers_from_backup_after_removing_self_servers() {
+    let config_path = unique_test_path("copilot-restore.json");
+    let backup_path = sibling_backup_path(&config_path, "msp-backup");
+    fs::write(
+        &config_path,
+        r#"{
+                "mcpServers": {
+                    "msp": {
+                        "type": "stdio",
+                        "command": "msp",
+                        "args": ["mcp", "--provider", "copilot"],
+                        "tools": ["*"]
+                    },
+                    "proxy": {
+                        "type": "local",
+                        "command": "msp",
+                        "args": ["mcp", "--provider", "codex"],
+                        "tools": ["*"]
+                    }
+                }
+            }"#,
+    )
+    .unwrap();
+    fs::write(
+        &backup_path,
+        r#"{
+                "mcpServers": {
+                    "alpha": {
+                        "type": "local",
+                        "command": "npx",
+                        "args": ["-y", "alpha-server"],
+                        "tools": ["*"]
+                    },
+                    "beta": {
+                        "type": "http",
+                        "url": "https://example.com/mcp",
+                        "tools": ["beta-read"]
+                    }
+                }
+            }"#,
+    )
+    .unwrap();
+
+    let restored = restore_copilot_mcp_servers_from_path(&config_path).unwrap();
+
+    assert_eq!(restored.config_path, config_path);
+    assert_eq!(restored.backup_path, backup_path);
+    assert_eq!(restored.removed_self_server_count, 2);
+    assert_eq!(restored.restored_server_count, 2);
+
+    let config = load_copilot_config(&config_path).unwrap();
+    let servers = config["mcpServers"].as_object().unwrap();
+    assert_eq!(servers.len(), 2);
+    assert!(servers.get("msp").is_none());
+    assert!(servers.get("proxy").is_none());
+    assert_eq!(servers["alpha"]["command"].as_str(), Some("npx"));
+    assert_eq!(
+        servers["beta"]["url"].as_str(),
+        Some("https://example.com/mcp")
+    );
+
+    fs::remove_file(config_path).unwrap();
+    fs::remove_file(backup_path).unwrap();
+}
+
+#[test]
 fn loads_codex_servers_for_import_from_path() {
     let config_path = unique_test_path("codex-import.toml");
     fs::write(
@@ -1079,6 +1313,100 @@ fn loads_codex_servers_for_import_from_path() {
     );
     assert!(plan.skipped_self_servers.is_empty());
     assert!(plan.skipped_unsupported_servers.is_empty());
+
+    fs::remove_file(config_path).unwrap();
+}
+
+#[test]
+fn loads_copilot_servers_for_import_from_path() {
+    let config_path = unique_test_path("copilot-import.json");
+    fs::write(
+        &config_path,
+        r#"{
+                "mcpServers": {
+                    "context7": {
+                        "type": "http",
+                        "url": "https://mcp.context7.com/mcp",
+                        "headers": {
+                            "CONTEXT7_API_KEY": "${CONTEXT7_API_KEY}"
+                        },
+                        "tools": ["*"]
+                    },
+                    "playwright": {
+                        "type": "local",
+                        "command": "npx",
+                        "args": ["@playwright/mcp@latest"],
+                        "env": {
+                            "DEBUG": "1"
+                        },
+                        "enabled": false,
+                        "tools": ["*"]
+                    }
+                }
+            }"#,
+    )
+    .unwrap();
+
+    let plan = load_copilot_servers_for_import_from_path(&config_path).unwrap();
+
+    assert_eq!(
+        plan.servers,
+        vec![
+            ImportableServer {
+                name: "context7".to_string(),
+                command: Vec::new(),
+                url: Some("https://mcp.context7.com/mcp".to_string()),
+                headers: BTreeMap::from([(
+                    "CONTEXT7_API_KEY".to_string(),
+                    "${CONTEXT7_API_KEY}".to_string(),
+                )]),
+                enabled: true,
+                env: BTreeMap::new(),
+                env_vars: vec!["CONTEXT7_API_KEY".to_string()],
+            },
+            ImportableServer {
+                name: "playwright".to_string(),
+                command: vec!["npx".to_string(), "@playwright/mcp@latest".to_string()],
+                url: None,
+                headers: BTreeMap::new(),
+                enabled: false,
+                env: BTreeMap::from([("DEBUG".to_string(), "1".to_string())]),
+                env_vars: Vec::new(),
+            },
+        ]
+    );
+    assert!(plan.skipped_self_servers.is_empty());
+    assert!(plan.skipped_unsupported_servers.is_empty());
+
+    fs::remove_file(config_path).unwrap();
+}
+
+#[test]
+fn rejects_copilot_import_server_with_unsupported_timeout() {
+    let config_path = unique_test_path("copilot-import-unsupported-timeout.json");
+    fs::write(
+        &config_path,
+        r#"{
+                "mcpServers": {
+                    "playwright": {
+                        "type": "local",
+                        "command": "npx",
+                        "args": ["@playwright/mcp@latest"],
+                        "tools": ["*"],
+                        "timeout": 30000
+                    }
+                }
+            }"#,
+    )
+    .unwrap();
+
+    let error = load_copilot_servers_for_import_from_path(&config_path).unwrap_err();
+
+    assert!(
+        error
+            .to_string()
+            .contains("Copilot CLI MCP server `playwright` uses unsupported settings `timeout`")
+    );
 
     fs::remove_file(config_path).unwrap();
 }
@@ -2724,7 +3052,7 @@ fn rejects_unsupported_provider_for_model_backed_runtime() {
 
     assert_eq!(
         error.to_string(),
-        "unsupported provider `anthropic`; supported providers are `codex`, `opencode`, and `claude`"
+        "unsupported provider `anthropic`; supported providers are `codex`, `opencode`, `claude`, and `copilot`"
     );
 }
 
@@ -2740,6 +3068,9 @@ fn loads_codex_provider_runtime_with_default_model() {
             panic!("expected codex provider")
         }
         ModelProviderConfig::Claude(_) => {
+            panic!("expected codex provider")
+        }
+        ModelProviderConfig::Copilot(_) => {
             panic!("expected codex provider")
         }
     }
@@ -2759,6 +3090,9 @@ fn loads_opencode_provider_runtime_with_default_model() {
         ModelProviderConfig::Claude(_) => {
             panic!("expected opencode provider")
         }
+        ModelProviderConfig::Copilot(_) => {
+            panic!("expected opencode provider")
+        }
     }
 }
 
@@ -2775,6 +3109,29 @@ fn loads_claude_provider_runtime_with_default_model() {
         }
         ModelProviderConfig::Opencode(_) => {
             panic!("expected claude provider")
+        }
+        ModelProviderConfig::Copilot(_) => {
+            panic!("expected claude provider")
+        }
+    }
+}
+
+#[test]
+fn loads_copilot_provider_runtime_with_default_model() {
+    let runtime = load_model_provider_config("copilot").unwrap();
+
+    match runtime {
+        ModelProviderConfig::Copilot(copilot) => {
+            assert_eq!(copilot.model, DEFAULT_COPILOT_MODEL);
+        }
+        ModelProviderConfig::Codex(_) => {
+            panic!("expected copilot provider")
+        }
+        ModelProviderConfig::Opencode(_) => {
+            panic!("expected copilot provider")
+        }
+        ModelProviderConfig::Claude(_) => {
+            panic!("expected copilot provider")
         }
     }
 }

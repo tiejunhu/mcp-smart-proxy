@@ -21,6 +21,7 @@
 ## Design notes
 
 - Keep shared import/export workflow helpers split by responsibility: provider-specific parsing stays in `src/config/import_export/<provider>.rs`, while format-specific file operations live in shared helpers under `src/config/import_export/`.
+- Keep GitHub Copilot CLI support split by concern: `src/config/import_export/copilot.rs` owns Copilot MCP config parsing/install/restore details, while programmatic summary generation stays in `src/reload/summarizer.rs`, and Copilot-only MCP fields such as `tools` may be accepted when import is lossless enough but fields that `msp` cannot preserve must still fail explicitly.
 - Keep CLI orchestration thin: `src/commands.rs` should focus on top-level dispatch, while grouped command workflows such as import/install or remote auth should live in `src/commands/*.rs`.
 - Keep `add` explicit about provider-dependent caching: `msp add` must require `--provider`, resolve the provider before persisting anything, then immediately refresh that server's cache with the chosen provider, and roll back the new config entry if cache generation fails, while keeping provider resolution and reload orchestration out of `src/config/`.
 - Keep `add` and `config` aligned for initial connectivity: `msp add` should accept the same connection-shaping inputs it needs for the first successful refresh, especially remote `url`, `headers`, `env`, `env_vars`, and `enabled`, instead of requiring an immediate follow-up `msp config`.

@@ -73,6 +73,20 @@ pub(crate) fn inspect_claude_self_server(
     )
 }
 
+pub(crate) fn inspect_copilot_self_server(
+    servers: &JsonMap<String, JsonValue>,
+    provider: &str,
+) -> Option<(String, bool)> {
+    inspect_self_server(
+        servers.iter().filter_map(|(name, value)| {
+            let server = value.as_object()?;
+            let raw_command = copilot_server_raw_command(server)?;
+            Some((name.clone(), raw_command))
+        }),
+        provider,
+    )
+}
+
 pub(crate) fn next_available_server_name<'a>(
     existing_names: impl Iterator<Item = &'a str>,
 ) -> String {
@@ -146,6 +160,33 @@ pub(crate) fn claude_server_raw_command(
         .unwrap_or("stdio")
     {
         "stdio" => {
+            let command = server.get("command")?.as_str()?.to_string();
+            let args = match server.get("args") {
+                None => Vec::new(),
+                Some(JsonValue::Array(items)) => items
+                    .iter()
+                    .map(|value| value.as_str().map(ToOwned::to_owned))
+                    .collect::<Option<Vec<_>>>()?,
+                Some(_) => return None,
+            };
+
+            let mut raw_command = vec![command];
+            raw_command.extend(args);
+            Some(raw_command)
+        }
+        _ => None,
+    }
+}
+
+pub(crate) fn copilot_server_raw_command(
+    server: &JsonMap<String, JsonValue>,
+) -> Option<Vec<String>> {
+    match server
+        .get("type")
+        .and_then(JsonValue::as_str)
+        .unwrap_or("stdio")
+    {
+        "local" | "stdio" => {
             let command = server.get("command")?.as_str()?.to_string();
             let args = match server.get("args") {
                 None => Vec::new(),

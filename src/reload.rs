@@ -533,8 +533,8 @@ mod tests {
     use std::time::Duration;
 
     use crate::reload::summarizer::{
-        claude_workdir_path, codex_output_path, codex_workdir_path, non_empty_summary,
-        opencode_workdir_path,
+        claude_workdir_path, codex_output_path, codex_workdir_path, copilot_workdir_path,
+        non_empty_summary, opencode_workdir_path,
     };
 
     #[test]
@@ -586,6 +586,19 @@ mod tests {
                 .and_then(|name| name.to_str())
                 .unwrap()
                 .starts_with("mcp-smart-proxy-claude-workdir-")
+        );
+    }
+
+    #[test]
+    fn copilot_workdir_path_is_created_in_temp_dir() {
+        let path = copilot_workdir_path().unwrap();
+
+        assert!(path.starts_with(env::temp_dir()));
+        assert!(
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .unwrap()
+                .starts_with("mcp-smart-proxy-copilot-workdir-")
         );
     }
 
