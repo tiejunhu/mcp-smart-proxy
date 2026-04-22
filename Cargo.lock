@@ -1392,7 +1392,7 @@ dependencies = [
 
 [[package]]
 name = "mcp-smart-proxy"
-version = "0.0.45"
+version = "0.0.46"
 dependencies = [
  "async-trait",
  "chrono",
