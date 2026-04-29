@@ -10,6 +10,7 @@ mod env_template;
 mod fs_util;
 mod mcp_server;
 mod paths;
+mod pi_extension;
 mod reload;
 mod remote;
 mod toon;

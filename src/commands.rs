@@ -7,7 +7,7 @@ use clap::Parser;
 
 #[cfg(test)]
 use crate::cli::ImportSource;
-use crate::cli::{Cli, Command, DaemonCommand, ProviderName};
+use crate::cli::{Cli, Command, DaemonCommand, InstallTarget, ProviderName};
 use crate::config::{
     list_servers, load_config_table, load_server_config, remove_server, set_server_enabled,
     update_server_config,
@@ -26,6 +26,7 @@ mod auth_cmd;
 mod config_cmd;
 mod import_cmd;
 mod mcp_cli;
+mod pi_extension_cmd;
 mod provider;
 
 use add_cmd::{AddCommandArgs, run_add_command};
@@ -33,6 +34,9 @@ use auth_cmd::{run_login_command, run_logout_command};
 use config_cmd::{ConfigCommandArgs, print_server_config};
 use import_cmd::{run_import_command, run_install_command, run_restore_command};
 use mcp_cli::run_mcp_cli_command;
+use pi_extension_cmd::{
+    run_install_pi_command, run_restore_pi_command, synchronize_installed_pi_extension_on_startup,
+};
 use provider::resolve_default_command_provider;
 #[cfg(test)]
 use provider::{resolve_import_provider, resolve_install_import_provider};
@@ -55,6 +59,10 @@ pub async fn run() -> Result<(), Box<dyn Error>> {
     ) {
         version_check::print_cached_update_notice();
     }
+    if !matches!(&cli.command, Some(Command::Update)) {
+        synchronize_installed_pi_extension_on_startup();
+    }
+
     let config_path = expand_tilde(&cli.config).map_err(|error| {
         operation_error("cli.config_path", "failed to resolve config path", error)
     })?;
@@ -131,10 +139,14 @@ pub async fn run() -> Result<(), Box<dyn Error>> {
         Some(Command::Import { provider, source }) => {
             run_import_command(&config_path, provider, source).await?
         }
-        Some(Command::Install { replace, target }) => {
-            run_install_command(&config_path, replace, target).await?
-        }
-        Some(Command::Restore { target }) => run_restore_command(target)?,
+        Some(Command::Install { replace, target }) => match target {
+            InstallTarget::Pi => run_install_pi_command(replace)?,
+            _ => run_install_command(&config_path, replace, target).await?,
+        },
+        Some(Command::Restore { target }) => match target {
+            InstallTarget::Pi => run_restore_pi_command()?,
+            _ => run_restore_command(target)?,
+        },
         Some(Command::Remove { name }) => run_remove_command(&config_path, &name)?,
         Some(Command::Login { name }) => run_login_command(&config_path, &name).await?,
         Some(Command::Logout { name }) => run_logout_command(&config_path, &name)?,

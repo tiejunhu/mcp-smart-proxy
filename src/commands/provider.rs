@@ -47,6 +47,7 @@ pub(crate) fn provider_hooks_for_install_target(target: InstallTarget) -> Provid
         InstallTarget::Opencode => provider_hooks("opencode"),
         InstallTarget::Claude => provider_hooks("claude"),
         InstallTarget::Copilot => provider_hooks("copilot"),
+        InstallTarget::Pi => unreachable!("pi installation is handled outside provider hooks"),
     }
 }
 

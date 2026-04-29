@@ -83,6 +83,14 @@ pub fn version_check_record_path_from_home(home: &Path) -> Result<PathBuf, Box<d
     Ok(cache_dir_path_from_home(home)?.join("version-update.json"))
 }
 
+pub fn pi_extension_path() -> Result<PathBuf, Box<dyn Error>> {
+    pi_extension_path_from_home(&home_dir()?)
+}
+
+pub fn pi_extension_path_from_home(home: &Path) -> Result<PathBuf, Box<dyn Error>> {
+    Ok(home.join(".pi/agent/extensions/msp.ts"))
+}
+
 pub fn installed_version_record_path(executable_path: &Path) -> Result<PathBuf, Box<dyn Error>> {
     let file_name = executable_path
         .file_name()
@@ -219,6 +227,15 @@ mod tests {
         let path = oauth_credentials_path_from_home(&home, "demo").unwrap();
 
         assert_eq!(path, home.join(".cache/mcp-smart-proxy/oauth/demo.json"));
+    }
+
+    #[test]
+    fn builds_global_pi_extension_path() {
+        let home = PathBuf::from("/tmp/example-home");
+
+        let path = pi_extension_path_from_home(&home).unwrap();
+
+        assert_eq!(path, home.join(".pi/agent/extensions/msp.ts"));
     }
 
     #[test]
