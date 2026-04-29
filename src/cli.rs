@@ -91,14 +91,14 @@ pub enum Command {
         provider: Option<ProviderName>,
         source: ImportSource,
     },
-    /// Install this proxy as an MCP server in another tool's config.
+    /// Install this proxy into another tool's MCP config, or install the bundled pi extension globally.
     Install {
         /// Import target MCP servers into msp, back them up, remove them, then install msp.
         #[arg(long)]
         replace: bool,
         target: InstallTarget,
     },
-    /// Remove installed msp MCP servers from another tool's config and restore backed up MCP servers.
+    /// Remove installed msp MCP servers from another tool's config, restore backed up MCP servers, or remove the bundled global pi extension.
     Restore { target: InstallTarget },
     /// Remove a configured MCP server and its cached tools.
     Remove { name: String },
@@ -167,6 +167,7 @@ pub enum InstallTarget {
     Opencode,
     Claude,
     Copilot,
+    Pi,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
@@ -512,6 +513,31 @@ mod tests {
         match cli.command {
             Some(Command::Restore { target }) => {
                 assert!(matches!(target, InstallTarget::Copilot));
+            }
+            other => panic!("expected restore command, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_install_pi_target() {
+        let cli = Cli::parse_from(["msp", "install", "pi"]);
+
+        match cli.command {
+            Some(Command::Install { replace, target }) => {
+                assert!(!replace);
+                assert!(matches!(target, InstallTarget::Pi));
+            }
+            other => panic!("expected install command, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_restore_pi_target() {
+        let cli = Cli::parse_from(["msp", "restore", "pi"]);
+
+        match cli.command {
+            Some(Command::Restore { target }) => {
+                assert!(matches!(target, InstallTarget::Pi));
             }
             other => panic!("expected restore command, got {other:?}"),
         }

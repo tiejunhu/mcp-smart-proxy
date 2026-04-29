@@ -44,6 +44,7 @@
 - Keep GitHub release publication in CI on the `gh` CLI path instead of Node-based third-party release actions, so release jobs stay aligned with GitHub-hosted tooling and avoid deprecated Node runtime churn.
 - Keep remote OAuth split by concern: generic OAuth discovery and token storage should stay reusable under `src/remote/oauth.rs`, while unsupported hosted endpoints should be rejected earlier by shared config-level remote URL validation.
 - Keep the bundled pi extension under `pi-extension/` prompt-only and session-cached: probe `msp cli -h` once per pi session, inject that cached help plus brief `msp cli` usage guidance in `before_agent_start`, and degrade with one warning instead of blocking when `msp` is unavailable.
+- Keep bundled pi extension install/sync split by concern: `src/pi_extension.rs` should own the embedded `msp.ts` content, global path resolution, install/restore, and best-effort sync for existing global installs, while `src/commands/pi_extension_cmd.rs` should keep CLI-facing messaging and argument validation thin.
 
 # Packages
 
