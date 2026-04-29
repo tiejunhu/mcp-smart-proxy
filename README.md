@@ -527,6 +527,24 @@ msp cli --output-toon github search_repositories --query rust --page 1
 
 `msp cli` starts or reuses the shared daemon, loads the current cached MCP snapshot through the daemon protocol, and routes the final downstream tool call through the daemon as well.
 
+## Use the Bundled pi Extension
+
+This repository also includes a project-local pi extension in `./pi-extension`.
+
+It detects whether `msp` is available on the local system, runs `msp cli -h` once per pi session, caches that output, and appends the cached inventory plus short MSP usage guidance to pi's `systemPrompt`. That gives pi a lightweight snapshot of which cached MCP servers are currently reachable through `msp cli`.
+
+Try it without installing anything:
+
+```bash
+pi -e ./pi-extension/index.ts
+```
+
+You can later copy or symlink `./pi-extension` into `.pi/extensions/` or `~/.pi/agent/extensions/` if you want pi to auto-discover it.
+
+If `msp` is missing or `msp cli -h` fails, the extension shows one warning and then skips prompt injection for that session.
+
+When your MSP inventory changes, run `/reload` or start a new pi session so the extension refreshes its cached `msp cli -h` snapshot.
+
 ## Background Self-Update
 
 When `msp mcp` is running, it checks GitHub Releases every 30 minutes.
