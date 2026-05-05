@@ -391,7 +391,7 @@ Install the bundled global pi extension:
 msp install pi
 ```
 
-This writes the embedded extension source to `~/.pi/agent/extensions/msp.ts`.
+This writes the embedded extension source to `~/.pi/agent/extensions/msp.ts` without leaving a sibling lock file in that directory.
 
 With `--replace`, `msp` first imports the host's current MCP servers into `msp`, backs them up, removes them from the host config, and then installs the proxy:
 
@@ -568,7 +568,7 @@ The same extension source is embedded in the `msp` binary, so you can install it
 msp install pi
 ```
 
-That writes `~/.pi/agent/extensions/msp.ts`. If that file already exists, `msp install pi` overwrites it.
+That writes `~/.pi/agent/extensions/msp.ts`. If that file already exists, `msp install pi` overwrites it, without leaving a sibling lock file in that directory.
 
 Try the project-local copy without installing anything:
 

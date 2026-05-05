@@ -45,6 +45,7 @@
 - Keep remote OAuth split by concern: generic OAuth discovery and token storage should stay reusable under `src/remote/oauth.rs`, while unsupported hosted endpoints should be rejected earlier by shared config-level remote URL validation.
 - Keep the bundled pi extension under `pi-extension/` prompt-only and session-cached: probe `msp cli -h` once per pi session, inject that cached help plus brief `msp cli` usage guidance in `before_agent_start`, and degrade with one warning instead of blocking when `msp` is unavailable.
 - Keep bundled pi extension install/sync split by concern: `src/pi_extension.rs` should own the embedded `msp.ts` content, global path resolution, install/restore, and best-effort sync for existing global installs, while `src/commands/pi_extension_cmd.rs` should keep CLI-facing messaging and argument validation thin.
+- Keep bundled pi extension locking out of pi's auto-discovered extension directory: use a cache-backed lock path under `~/.cache/mcp-smart-proxy/` so `~/.pi/agent/extensions/msp.ts` does not leave a sibling `.lock` file behind after install or sync.
 
 # Packages
 

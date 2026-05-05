@@ -9,8 +9,7 @@ pub struct FileLockGuard {
     _file: File,
 }
 
-pub fn acquire_sibling_lock(path: &Path) -> io::Result<FileLockGuard> {
-    let lock_path = sibling_lock_path(path);
+pub fn acquire_lock(lock_path: &Path) -> io::Result<FileLockGuard> {
     if let Some(parent) = lock_path.parent() {
         fs::create_dir_all(parent)?;
     }
@@ -23,6 +22,10 @@ pub fn acquire_sibling_lock(path: &Path) -> io::Result<FileLockGuard> {
         .open(lock_path)?;
     file.lock()?;
     Ok(FileLockGuard { _file: file })
+}
+
+pub fn acquire_sibling_lock(path: &Path) -> io::Result<FileLockGuard> {
+    acquire_lock(&sibling_lock_path(path))
 }
 
 pub fn write_file_atomically(path: &Path, bytes: &[u8]) -> io::Result<()> {
@@ -58,6 +61,23 @@ fn temporary_path_for(path: &Path) -> io::Result<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn acquires_exact_lock_path() {
+        let path = std::env::temp_dir().join(format!(
+            "msp-fs-util-lock-{}-{}.lock",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+
+        let _guard = acquire_lock(&path).unwrap();
+
+        assert!(path.exists());
+        let _ = fs::remove_file(path);
+    }
 
     #[test]
     fn acquires_sibling_lock_next_to_target() {
