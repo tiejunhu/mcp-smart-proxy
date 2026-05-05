@@ -29,10 +29,10 @@ function trimHelpText(stdout: string): string | undefined {
 function buildSystemPromptSection(helpText: string, bashAvailable: boolean): string {
   const usageGuidance = bashAvailable
     ? [
-      "- Use the `bash` tool to inspect and call MSP-backed tools from this session.",
-      "- Inspect one tool's arguments with `msp cli <mcp-name> <tool-name> -h`.",
-      "- Invoke one tool with `msp cli <mcp-name> <tool-name> --<parameter> <value>`.",
-      "- Always inspect the help text before invoking a tool.",
+      "- Use the `bash` tool to inspect and call msp-backed tools from this session.",
+      "- Inspect tool's arguments with `msp cli <mcp-name> <tool-name> -h`.",
+      "- Invoke tool with `msp cli <mcp-name> <tool-name> --<parameter> <value>`.",
+      "- Always inspect the arguments before invoking a tool.",
     ]
     : [
       "- The current active tool set does not include `bash`, so treat this MSP inventory as reference only unless another extension provides shell execution.",
@@ -42,7 +42,7 @@ function buildSystemPromptSection(helpText: string, bashAvailable: boolean): str
 
 ## MSP CLI Inventory
 
-The local system has the \`msp\` CLI available. The following block is the cached output of \`msp cli -h\` for this pi session. Use it as the current inventory of cached MCP servers that can be reached through MSP.
+The local system has the \`msp\` CLI available. The following is the output of \`msp cli -h\`. Use it as the current inventory of MCP servers that can be reached through \`msp\`.
 
 \`\`\`text
 ${helpText}
