@@ -290,20 +290,41 @@ fn format_tool_result(
     result: &CallToolResult,
     output_toon: bool,
 ) -> Result<String, Box<dyn Error>> {
-    if output_toon && let Some(structured_content) = result.structured_content.as_ref() {
+    if let Some(structured_content) = result.structured_content.as_ref() {
+        return format_structured_tool_result(structured_content, output_toon);
+    }
+
+    if let Some(text) = single_text_tool_result(result) {
+        return Ok(format!("{text}\n"));
+    }
+
+    let payload = serde_json::to_value(result)
+        .map_err(|error| format!("failed to serialize tool result: {error}"))?;
+    format_json_value(&payload)
+}
+
+fn format_structured_tool_result(
+    structured_content: &JsonValue,
+    output_toon: bool,
+) -> Result<String, Box<dyn Error>> {
+    if output_toon {
         let toon = encode_json_to_toon(structured_content)
             .map_err(|error| format!("failed to encode structured tool result as TOON: {error}"))?;
         return Ok(format!("{toon}\n"));
     }
 
-    let payload = serde_json::to_value(result)
-        .map_err(|error| format!("failed to serialize tool result: {error}"))?;
-    let rendered = display_tool_result(&payload);
-    Ok(format!("{}\n", serde_json::to_string_pretty(rendered)?))
+    format_json_value(structured_content)
 }
 
-fn display_tool_result(result: &JsonValue) -> &JsonValue {
-    result.get("structuredContent").unwrap_or(result)
+fn single_text_tool_result(result: &CallToolResult) -> Option<&str> {
+    match result.content.as_slice() {
+        [content] => content.as_text().map(|text| text.text.as_str()),
+        _ => None,
+    }
+}
+
+fn format_json_value(value: &JsonValue) -> Result<String, Box<dyn Error>> {
+    Ok(format!("{}\n", serde_json::to_string_pretty(value)?))
 }
 
 fn parse_tool_arguments(
@@ -1095,5 +1116,34 @@ mod tests {
         let output = format_tool_result(&result, true).unwrap();
 
         assert_eq!(output, "users[2]{id,name}:\n  1,Alice\n  2,Bob\n");
+    }
+
+    #[test]
+    fn prints_single_text_content_without_toon_when_structured_content_is_missing() {
+        let result = CallToolResult::success(vec![rmcp::model::Content::text("4")]);
+
+        let output = format_tool_result(&result, false).unwrap();
+
+        assert_eq!(output, "4\n");
+    }
+
+    #[test]
+    fn prints_single_text_content_when_toon_requested_without_structured_content() {
+        let result = CallToolResult::success(vec![rmcp::model::Content::text("4")]);
+
+        let output = format_tool_result(&result, true).unwrap();
+
+        assert_eq!(output, "4\n");
+    }
+
+    #[test]
+    fn falls_back_to_json_for_non_text_content_when_toon_requested() {
+        let result =
+            CallToolResult::success(vec![rmcp::model::Content::image("aGVsbG8=", "image/png")]);
+
+        let output = format_tool_result(&result, true).unwrap();
+
+        assert!(output.starts_with("{\n  \"content\": [\n    {\n      \"type\": \"image\""));
+        assert!(output.contains("\"mimeType\": \"image/png\""));
     }
 }

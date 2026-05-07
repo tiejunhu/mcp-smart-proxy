@@ -548,11 +548,15 @@ Call one downstream MCP tool through the shared daemon:
 msp cli github search_repositories --query rust --page 1
 ```
 
+When a tool returns a single plain text content item and no `structuredContent`, `msp cli` prints that text directly.
+
 If you want terminal output in TOON when a downstream tool returns `structuredContent`, add `--output-toon` before the MCP name:
 
 ```bash
 msp cli --output-toon github search_repositories --query rust --page 1
 ```
+
+With `--output-toon`, `msp cli` renders `structuredContent` as TOON. Without `--output-toon`, the same structured payload is printed as pretty JSON. Mixed or non-text content still falls back to JSON.
 
 `msp cli` starts or reuses the shared daemon, loads the current cached MCP snapshot through the daemon protocol, and routes the final downstream tool call through the daemon as well.
 
