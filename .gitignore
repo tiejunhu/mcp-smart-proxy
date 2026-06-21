@@ -1,2 +1,6 @@
 /target
 /src/target/
+
+# Editor caches
+/.clj-kondo/
+/.lsp/

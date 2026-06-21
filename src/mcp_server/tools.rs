@@ -14,7 +14,7 @@ pub(super) const ACTIVATE_ADDITIONAL_MCPS_NAME: &str = "activate_additional_mcps
 pub(super) const ACTIVATE_TOOLS_IN_ADDITIONAL_MCP_NAME: &str = "activate_tools_in_additional_mcp";
 pub(super) const CALL_TOOL_IN_ADDITIONAL_MCP_NAME: &str = "call_tool_in_additional_mcp";
 pub(super) const EVAL_LUA_SCRIPT_DESCRIPTION: &str = "Evaluate a Lua 5.5 script. The script can call any activated MCP tools through the async `call_mcp_tool(mcp_name, tool_name, args)` helper, where `args` must be a Lua table that maps to a JSON object or nil.";
-pub(super) const STDIO_HOST_REQUIRED_MESSAGE: &str = "`msp mcp` is a stdio MCP server and must be started by an MCP client such as Codex, OpenCode, or Claude Code instead of running directly in a terminal";
+pub(super) const STDIO_HOST_REQUIRED_MESSAGE: &str = "`msp mcp` is a stdio MCP server and must be started by an MCP client such as Codex, OpenCode, Claude Code, Copilot CLI, or Crush instead of running directly in a terminal";
 
 #[derive(Debug, Deserialize)]
 pub(super) struct ActivateAdditionalMcpsRequest {

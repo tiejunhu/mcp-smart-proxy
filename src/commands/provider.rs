@@ -5,11 +5,12 @@ use crate::cli::{ImportSource, InstallTarget, ProviderName};
 use crate::config::{
     ImportPlan, InstallMcpServerResult, ReplaceMcpServersResult, RestoreMcpServersResult,
     install_claude_mcp_server, install_codex_mcp_server, install_copilot_mcp_server,
-    install_opencode_mcp_server, load_claude_servers_for_import, load_codex_servers_for_import,
-    load_copilot_servers_for_import, load_model_provider_config, load_opencode_servers_for_import,
-    replace_claude_mcp_servers, replace_codex_mcp_servers, replace_copilot_mcp_servers,
+    install_crush_mcp_server, install_opencode_mcp_server, load_claude_servers_for_import,
+    load_codex_servers_for_import, load_copilot_servers_for_import, load_crush_servers_for_import,
+    load_model_provider_config, load_opencode_servers_for_import, replace_claude_mcp_servers,
+    replace_codex_mcp_servers, replace_copilot_mcp_servers, replace_crush_mcp_servers,
     replace_opencode_mcp_servers, restore_claude_mcp_servers, restore_codex_mcp_servers,
-    restore_copilot_mcp_servers, restore_opencode_mcp_servers,
+    restore_copilot_mcp_servers, restore_crush_mcp_servers, restore_opencode_mcp_servers,
 };
 use crate::types::ModelProviderConfig;
 
@@ -38,6 +39,7 @@ pub(crate) fn provider_hooks_for_import_source(source: ImportSource) -> Provider
         ImportSource::Opencode => provider_hooks("opencode"),
         ImportSource::Claude => provider_hooks("claude"),
         ImportSource::Copilot => provider_hooks("copilot"),
+        ImportSource::Crush => provider_hooks("crush"),
     }
 }
 
@@ -47,6 +49,7 @@ pub(crate) fn provider_hooks_for_install_target(target: InstallTarget) -> Provid
         InstallTarget::Opencode => provider_hooks("opencode"),
         InstallTarget::Claude => provider_hooks("claude"),
         InstallTarget::Copilot => provider_hooks("copilot"),
+        InstallTarget::Crush => provider_hooks("crush"),
         InstallTarget::Pi => unreachable!("pi installation is handled outside provider hooks"),
     }
 }
@@ -150,6 +153,19 @@ fn provider_hooks(provider_name: &'static str) -> ProviderHooks {
             import_run_stage: "cli.import.copilot",
             install_stage: "cli.install.copilot",
             restore_stage: "cli.restore.copilot",
+        },
+        "crush" => ProviderHooks {
+            provider_name,
+            import_source: ImportSource::Crush,
+            load_import_plan: load_crush_servers_for_import,
+            install_server: install_crush_mcp_server,
+            replace_servers: replace_crush_mcp_servers,
+            restore_servers: restore_crush_mcp_servers,
+            import_load_provider_stage: "cli.import.crush.load_provider",
+            import_load_source_stage: "cli.import.crush.load_source",
+            import_run_stage: "cli.import.crush",
+            install_stage: "cli.install.crush",
+            restore_stage: "cli.restore.crush",
         },
         _ => unreachable!(),
     }

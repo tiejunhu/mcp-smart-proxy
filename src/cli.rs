@@ -159,6 +159,7 @@ pub enum ImportSource {
     Opencode,
     Claude,
     Copilot,
+    Crush,
 }
 
 #[derive(Debug, Clone, ValueEnum)]
@@ -167,6 +168,7 @@ pub enum InstallTarget {
     Opencode,
     Claude,
     Copilot,
+    Crush,
     Pi,
 }
 
@@ -176,6 +178,7 @@ pub enum ProviderName {
     Opencode,
     Claude,
     Copilot,
+    Crush,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
@@ -200,6 +203,7 @@ impl ProviderName {
             Self::Opencode => "opencode",
             Self::Claude => "claude",
             Self::Copilot => "copilot",
+            Self::Crush => "crush",
         }
     }
 }

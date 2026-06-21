@@ -143,6 +143,43 @@ fn resolves_copilot_config_path_from_copilot_home() {
 }
 
 #[test]
+fn resolves_crush_config_path_from_env() {
+    let _guard = env_lock().lock().unwrap();
+    let previous = env::var(CRUSH_CONFIG_ENV).ok();
+
+    unsafe {
+        env::set_var(CRUSH_CONFIG_ENV, "/tmp/crush-config.json");
+    }
+
+    let path = crush_config_path().unwrap();
+
+    assert_eq!(path, PathBuf::from("/tmp/crush-config.json"));
+
+    match previous {
+        Some(value) => unsafe { env::set_var(CRUSH_CONFIG_ENV, value) },
+        None => unsafe { env::remove_var(CRUSH_CONFIG_ENV) },
+    }
+}
+
+fn with_crush_config_env<T>(config_path: &Path, test: impl FnOnce() -> T) -> T {
+    let _guard = env_lock().lock().unwrap();
+    let previous = env::var(CRUSH_CONFIG_ENV).ok();
+
+    unsafe {
+        env::set_var(CRUSH_CONFIG_ENV, config_path);
+    }
+
+    let result = test();
+
+    match previous {
+        Some(value) => unsafe { env::set_var(CRUSH_CONFIG_ENV, value) },
+        None => unsafe { env::remove_var(CRUSH_CONFIG_ENV) },
+    }
+
+    result
+}
+
+#[test]
 fn installs_codex_mcp_server_when_missing() {
     let codex_home = unique_test_path("codex-install-home");
     fs::create_dir_all(&codex_home).unwrap();
@@ -3052,7 +3089,7 @@ fn rejects_unsupported_provider_for_model_backed_runtime() {
 
     assert_eq!(
         error.to_string(),
-        "unsupported provider `anthropic`; supported providers are `codex`, `opencode`, `claude`, and `copilot`"
+        "unsupported provider `anthropic`; supported providers are `codex`, `opencode`, `claude`, `copilot`, and `crush`"
     );
 }
 
@@ -3071,6 +3108,9 @@ fn loads_codex_provider_runtime_with_default_model() {
             panic!("expected codex provider")
         }
         ModelProviderConfig::Copilot(_) => {
+            panic!("expected codex provider")
+        }
+        ModelProviderConfig::Crush(_) => {
             panic!("expected codex provider")
         }
     }
@@ -3093,6 +3133,9 @@ fn loads_opencode_provider_runtime_with_default_model() {
         ModelProviderConfig::Copilot(_) => {
             panic!("expected opencode provider")
         }
+        ModelProviderConfig::Crush(_) => {
+            panic!("expected opencode provider")
+        }
     }
 }
 
@@ -3111,6 +3154,9 @@ fn loads_claude_provider_runtime_with_default_model() {
             panic!("expected claude provider")
         }
         ModelProviderConfig::Copilot(_) => {
+            panic!("expected claude provider")
+        }
+        ModelProviderConfig::Crush(_) => {
             panic!("expected claude provider")
         }
     }
@@ -3133,6 +3179,19 @@ fn loads_copilot_provider_runtime_with_default_model() {
         ModelProviderConfig::Claude(_) => {
             panic!("expected copilot provider")
         }
+        ModelProviderConfig::Crush(_) => {
+            panic!("expected copilot provider")
+        }
+    }
+}
+
+#[test]
+fn loads_crush_provider_runtime() {
+    let runtime = load_model_provider_config("crush").unwrap();
+
+    match runtime {
+        ModelProviderConfig::Crush(_) => {}
+        _ => panic!("expected crush provider"),
     }
 }
 
@@ -3370,6 +3429,505 @@ fn builds_cache_file_path_under_default_cache_dir() {
     let path = cache_file_path_from_home(&home, "demo-server").unwrap();
 
     assert_eq!(path, home.join(".cache/mcp-smart-proxy/demo-server.json"));
+}
+
+#[test]
+fn installs_crush_mcp_server_when_missing() {
+    let config_path = unique_test_path("crush-install.json");
+    with_crush_config_env(&config_path, || {
+        let installed = install_crush_mcp_server().unwrap();
+
+        assert_eq!(installed.name, "msp");
+        assert_eq!(installed.status, InstallMcpServerStatus::Installed);
+        assert_eq!(installed.config_path, config_path);
+
+        let contents = fs::read_to_string(&installed.config_path).unwrap();
+        let config: JsonValue = serde_json::from_str(&contents).unwrap();
+        let server = config["mcp"]["msp"].as_object().unwrap();
+        assert_eq!(server["type"].as_str(), Some("stdio"));
+        assert_eq!(server["command"].as_str(), Some("msp"));
+        assert_eq!(
+            server["args"].as_array().unwrap(),
+            &vec![
+                JsonValue::String("mcp".to_string()),
+                JsonValue::String("--provider".to_string()),
+                JsonValue::String("crush".to_string()),
+            ]
+        );
+    });
+
+    fs::remove_file(config_path).unwrap();
+}
+
+#[test]
+fn recognizes_existing_crush_self_server_with_matching_provider() {
+    let config_path = unique_test_path("crush-existing.json");
+    fs::write(
+        &config_path,
+        r#"{
+                "mcp": {
+                    "proxy": {
+                        "type": "stdio",
+                        "command": "msp",
+                        "args": ["mcp", "--provider", "crush"]
+                    }
+                }
+            }"#,
+    )
+    .unwrap();
+
+    with_crush_config_env(&config_path, || {
+        let installed = install_crush_mcp_server().unwrap();
+
+        assert_eq!(installed.name, "proxy");
+        assert_eq!(installed.status, InstallMcpServerStatus::AlreadyInstalled);
+    });
+
+    fs::remove_file(config_path).unwrap();
+}
+
+#[test]
+fn loads_crush_servers_for_import_from_path() {
+    let config_path = unique_test_path("crush-import.json");
+    fs::write(
+        &config_path,
+        r#"{
+                "mcp": {
+                    "beta": {
+                        "command": "uvx",
+                        "args": ["beta-server"],
+                        "type": "stdio"
+                    },
+                    "alpha": {
+                        "command": "npx",
+                        "args": ["-y", "@modelcontextprotocol/server-github"],
+                        "type": "stdio"
+                    }
+                }
+            }"#,
+    )
+    .unwrap();
+
+    let plan = load_crush_servers_for_import_from_path(&config_path).unwrap();
+
+    assert_eq!(
+        plan.servers,
+        vec![
+            ImportableServer {
+                name: "alpha".to_string(),
+                command: vec![
+                    "npx".to_string(),
+                    "-y".to_string(),
+                    "@modelcontextprotocol/server-github".to_string(),
+                ],
+                url: None,
+                headers: BTreeMap::new(),
+                enabled: true,
+                env: BTreeMap::new(),
+                env_vars: Vec::new(),
+            },
+            ImportableServer {
+                name: "beta".to_string(),
+                command: vec!["uvx".to_string(), "beta-server".to_string()],
+                url: None,
+                headers: BTreeMap::new(),
+                enabled: true,
+                env: BTreeMap::new(),
+                env_vars: Vec::new(),
+            },
+        ]
+    );
+    assert!(plan.skipped_self_servers.is_empty());
+    assert!(plan.skipped_unsupported_servers.is_empty());
+
+    fs::remove_file(config_path).unwrap();
+}
+
+#[test]
+fn loads_crush_server_environment_for_import() {
+    let config_path = unique_test_path("crush-import-environment.json");
+    fs::write(
+        &config_path,
+        r#"{
+                "mcp": {
+                    "demo": {
+                        "command": "npx",
+                        "args": ["-y", "demo-server"],
+                        "type": "stdio",
+                        "env": {
+                            "DEMO_REGION": "global"
+                        }
+                    }
+                }
+            }"#,
+    )
+    .unwrap();
+
+    let plan = load_crush_servers_for_import_from_path(&config_path).unwrap();
+
+    assert_eq!(plan.servers.len(), 1);
+    assert_eq!(
+        plan.servers[0].env.get("DEMO_REGION"),
+        Some(&"global".to_string())
+    );
+    assert!(plan.servers[0].env_vars.is_empty());
+
+    fs::remove_file(config_path).unwrap();
+}
+
+#[test]
+fn loads_crush_remote_headers_for_import() {
+    let config_path = unique_test_path("crush-import-remote.json");
+    fs::write(
+        &config_path,
+        r#"{
+                "mcp": {
+                    "demo": {
+                        "type": "http",
+                        "url": "https://example.com/mcp",
+                        "headers": {
+                            "Authorization": "Bearer {env:DEMO_TOKEN}"
+                        }
+                    }
+                }
+            }"#,
+    )
+    .unwrap();
+
+    let plan = load_crush_servers_for_import_from_path(&config_path).unwrap();
+
+    assert_eq!(plan.servers.len(), 1);
+    assert_eq!(plan.servers[0].command, Vec::<String>::new());
+    assert_eq!(
+        plan.servers[0].url.as_deref(),
+        Some("https://example.com/mcp")
+    );
+    assert_eq!(
+        plan.servers[0].headers,
+        BTreeMap::from([(
+            "Authorization".to_string(),
+            "Bearer {env:DEMO_TOKEN}".to_string(),
+        )])
+    );
+    assert!(plan.servers[0].env.is_empty());
+    assert_eq!(plan.servers[0].env_vars, vec!["DEMO_TOKEN".to_string()]);
+
+    fs::remove_file(config_path).unwrap();
+}
+
+#[test]
+fn preserves_crush_disabled_state_when_loading_import_plan() {
+    let config_path = unique_test_path("crush-import-disabled.json");
+    fs::write(
+        &config_path,
+        r#"{
+                "mcp": {
+                    "alpha": {
+                        "command": "npx",
+                        "args": ["-y", "alpha-server"],
+                        "type": "stdio",
+                        "disabled": true
+                    },
+                    "beta": {
+                        "command": "npx",
+                        "args": ["-y", "beta-server"],
+                        "type": "stdio"
+                    }
+                }
+            }"#,
+    )
+    .unwrap();
+
+    let plan = load_crush_servers_for_import_from_path(&config_path).unwrap();
+
+    let alpha = plan
+        .servers
+        .iter()
+        .find(|server| server.name == "alpha")
+        .unwrap();
+    assert!(!alpha.enabled);
+    let beta = plan
+        .servers
+        .iter()
+        .find(|server| server.name == "beta")
+        .unwrap();
+    assert!(beta.enabled);
+
+    fs::remove_file(config_path).unwrap();
+}
+
+#[test]
+fn skips_self_server_when_loading_crush_import_plan() {
+    let config_path = unique_test_path("crush-import-self.json");
+    fs::write(
+        &config_path,
+        r#"{
+                "mcp": {
+                    "proxy": {
+                        "type": "stdio",
+                        "command": "msp",
+                        "args": ["mcp"]
+                    },
+                    "github": {
+                        "command": "npx",
+                        "args": ["-y", "@modelcontextprotocol/server-github"],
+                        "type": "stdio"
+                    }
+                }
+            }"#,
+    )
+    .unwrap();
+
+    let plan = load_crush_servers_for_import_from_path(&config_path).unwrap();
+
+    assert_eq!(
+        plan.servers,
+        vec![ImportableServer {
+            name: "github".to_string(),
+            command: vec![
+                "npx".to_string(),
+                "-y".to_string(),
+                "@modelcontextprotocol/server-github".to_string(),
+            ],
+            url: None,
+            headers: BTreeMap::new(),
+            enabled: true,
+            env: BTreeMap::new(),
+            env_vars: Vec::new(),
+        }]
+    );
+    assert_eq!(plan.skipped_self_servers, vec!["proxy".to_string()]);
+    assert!(plan.skipped_unsupported_servers.is_empty());
+
+    fs::remove_file(config_path).unwrap();
+}
+
+#[test]
+fn rejects_crush_import_when_server_uses_unsupported_fields() {
+    let config_path = unique_test_path("crush-import-unsupported.json");
+    fs::write(
+        &config_path,
+        r#"{
+                "mcp": {
+                    "demo": {
+                        "command": "npx",
+                        "args": ["-y", "demo-server"],
+                        "type": "stdio",
+                        "disabled_tools": ["some-tool-name"]
+                    }
+                }
+            }"#,
+    )
+    .unwrap();
+
+    let error = load_crush_servers_for_import_from_path(&config_path).unwrap_err();
+
+    assert_eq!(
+        error.to_string(),
+        "Crush MCP server `demo` uses unsupported settings `disabled_tools`; only `command`, optional `args`, optional `env`, optional `disabled`, and optional `type` can be imported"
+    );
+
+    fs::remove_file(config_path).unwrap();
+}
+
+#[test]
+fn rejects_crush_import_when_command_is_not_a_string() {
+    let config_path = unique_test_path("crush-import-invalid-command.json");
+    fs::write(
+        &config_path,
+        r#"{
+                "mcp": {
+                    "demo": {
+                        "command": ["npx", "-y", "demo-server"],
+                        "type": "stdio"
+                    }
+                }
+            }"#,
+    )
+    .unwrap();
+
+    let error = load_crush_servers_for_import_from_path(&config_path).unwrap_err();
+
+    assert_eq!(
+        error.to_string(),
+        "Crush MCP server `demo` is missing `command`"
+    );
+
+    fs::remove_file(config_path).unwrap();
+}
+
+#[test]
+fn rejects_crush_import_when_no_servers_are_configured() {
+    let config_path = unique_test_path("crush-import-empty.json");
+    fs::write(&config_path, "{}").unwrap();
+
+    let error = load_crush_servers_for_import_from_path(&config_path).unwrap_err();
+
+    assert_eq!(
+        error.to_string(),
+        format!(
+            "no `mcp` object found in Crush config {}",
+            config_path.display()
+        )
+    );
+
+    fs::remove_file(config_path).unwrap();
+}
+
+#[test]
+fn replaces_crush_servers_after_merging_backup_without_duplicates() {
+    let config_path = unique_test_path("crush-replace.json");
+    let backup_path = sibling_backup_path(&config_path, "msp-backup");
+    fs::write(
+        &config_path,
+        r#"{
+                "mcp": {
+                    "alpha": {
+                        "type": "stdio",
+                        "command": "npx",
+                        "args": ["-y", "alpha-server"]
+                    },
+                    "beta": {
+                        "type": "stdio",
+                        "command": "uvx",
+                        "args": ["beta-server"]
+                    }
+                }
+            }"#,
+    )
+    .unwrap();
+    fs::write(
+        &backup_path,
+        r#"{
+                "mcp": {
+                    "beta": {
+                        "type": "stdio",
+                        "command": "old",
+                        "args": ["beta-old"]
+                    },
+                    "gamma": {
+                        "type": "stdio",
+                        "command": "npx",
+                        "args": ["-y", "gamma-server"]
+                    }
+                }
+            }"#,
+    )
+    .unwrap();
+
+    let replaced = replace_crush_mcp_servers_from_path(&config_path).unwrap();
+
+    assert_eq!(replaced.config_path, config_path);
+    assert_eq!(replaced.backup_path, backup_path);
+    assert_eq!(replaced.backed_up_server_count, 2);
+    assert_eq!(replaced.removed_server_count, 2);
+
+    let config = load_crush_config(&config_path).unwrap();
+    assert!(config.get("mcp").is_none());
+
+    let backup = load_crush_config(&backup_path).unwrap();
+    let backup_servers = backup["mcp"].as_object().unwrap();
+    assert_eq!(backup_servers.len(), 3);
+    assert_eq!(backup_servers["alpha"]["command"].as_str(), Some("npx"));
+    assert_eq!(backup_servers["beta"]["command"].as_str(), Some("uvx"));
+    assert!(backup_servers.get("gamma").is_some());
+
+    fs::remove_file(config_path).unwrap();
+    fs::remove_file(backup_path).unwrap();
+}
+
+#[test]
+fn restores_crush_servers_from_backup_after_removing_self_servers() {
+    let config_path = unique_test_path("crush-restore.json");
+    let backup_path = sibling_backup_path(&config_path, "msp-backup");
+    fs::write(
+        &config_path,
+        r#"{
+                "mcp": {
+                    "msp": {
+                        "type": "stdio",
+                        "command": "msp",
+                        "args": ["mcp", "--provider", "crush"]
+                    },
+                    "proxy": {
+                        "type": "stdio",
+                        "command": "msp",
+                        "args": ["mcp", "--provider", "codex"]
+                    }
+                }
+            }"#,
+    )
+    .unwrap();
+    fs::write(
+        &backup_path,
+        r#"{
+                "mcp": {
+                    "msp": {
+                        "type": "stdio",
+                        "command": "msp",
+                        "args": ["mcp", "--provider", "crush"]
+                    },
+                    "alpha": {
+                        "type": "stdio",
+                        "command": "npx",
+                        "args": ["-y", "alpha-server"]
+                    }
+                }
+            }"#,
+    )
+    .unwrap();
+
+    let restored = restore_crush_mcp_servers_from_path(&config_path).unwrap();
+
+    assert_eq!(restored.restored_server_count, 1);
+
+    let config = load_crush_config(&config_path).unwrap();
+    let servers = config["mcp"].as_object().unwrap();
+    assert_eq!(servers.len(), 1);
+    assert!(servers.get("msp").is_none());
+    assert!(servers.get("proxy").is_none());
+    assert!(servers.get("alpha").is_some());
+
+    fs::remove_file(config_path).unwrap();
+    fs::remove_file(backup_path).unwrap();
+}
+
+#[test]
+fn replace_crush_does_not_back_up_self_servers() {
+    let config_path = unique_test_path("crush-replace-filters-self.json");
+    let backup_path = sibling_backup_path(&config_path, "msp-backup");
+    fs::write(
+        &config_path,
+        r#"{
+                "mcp": {
+                    "msp": {
+                        "type": "stdio",
+                        "command": "msp",
+                        "args": ["mcp", "--provider", "crush"]
+                    },
+                    "alpha": {
+                        "type": "stdio",
+                        "command": "npx",
+                        "args": ["-y", "alpha-server"]
+                    }
+                }
+            }"#,
+    )
+    .unwrap();
+
+    let replaced = replace_crush_mcp_servers_from_path(&config_path).unwrap();
+
+    assert_eq!(replaced.backed_up_server_count, 1);
+    assert_eq!(replaced.removed_server_count, 2);
+
+    let backup = load_crush_config(&backup_path).unwrap();
+    let backup_servers = backup["mcp"].as_object().unwrap();
+    assert_eq!(backup_servers.len(), 1);
+    assert!(backup_servers.get("msp").is_none());
+    assert!(backup_servers.get("alpha").is_some());
+
+    fs::remove_file(config_path).unwrap();
+    fs::remove_file(backup_path).unwrap();
 }
 
 fn unique_test_path(name: &str) -> PathBuf {
