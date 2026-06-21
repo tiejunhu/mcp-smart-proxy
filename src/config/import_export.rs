@@ -4,6 +4,7 @@ mod common;
 mod copilot;
 mod crush;
 mod json_support;
+mod omp;
 mod opencode;
 mod toml_support;
 
@@ -22,6 +23,10 @@ pub use copilot::{
 pub use crush::{
     install_crush_mcp_server, load_crush_servers_for_import, replace_crush_mcp_servers,
     restore_crush_mcp_servers,
+};
+pub use omp::{
+    install_omp_mcp_server, load_omp_servers_for_import, replace_omp_mcp_servers,
+    restore_omp_mcp_servers,
 };
 pub use opencode::{
     install_opencode_mcp_server, load_opencode_servers_for_import, replace_opencode_mcp_servers,
@@ -49,6 +54,11 @@ pub(crate) use copilot::{
 pub(crate) use crush::{
     load_crush_config, load_crush_servers_for_import_from_path,
     replace_crush_mcp_servers_from_path, restore_crush_mcp_servers_from_path,
+};
+#[cfg(test)]
+pub(crate) use omp::{
+    load_omp_config, load_omp_servers_for_import_from_path, replace_omp_mcp_servers_from_path,
+    restore_omp_mcp_servers_from_path,
 };
 #[cfg(test)]
 pub(crate) use opencode::{

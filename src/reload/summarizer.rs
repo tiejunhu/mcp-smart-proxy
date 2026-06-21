@@ -37,6 +37,7 @@ pub(crate) async fn summarize_tools(
             summarize_tools_with_copilot(copilot, &prompt).await
         }
         ModelProviderConfig::Crush(_) => summarize_tools_with_crush(&prompt).await,
+        ModelProviderConfig::Omp(_) => summarize_tools_with_omp(&prompt).await,
     }
 }
 
@@ -510,6 +511,84 @@ async fn summarize_tools_with_crush(prompt: &str) -> Result<String, Box<dyn Erro
     summary
 }
 
+async fn summarize_tools_with_omp(prompt: &str) -> Result<String, Box<dyn Error>> {
+    let workdir = omp_workdir_path().map_err(|error| {
+        operation_error(
+            "reload.summarize_tools.omp.workdir_path",
+            "failed to compute a temporary workdir path for `omp launch`",
+            error,
+        )
+    })?;
+    fs::create_dir(&workdir).map_err(|error| {
+        operation_error(
+            "reload.summarize_tools.omp.create_workdir",
+            format!(
+                "failed to create temporary workdir {}",
+                format_path_for_display(&workdir)
+            ),
+            Box::new(error),
+        )
+    })?;
+
+    let command_args = vec![
+        "launch".to_string(),
+        "--print".to_string(),
+        prompt.to_string(),
+    ];
+    let command_line = describe_command("omp", &command_args);
+
+    let mut child = tokio::process::Command::new("omp")
+        .current_dir(&workdir)
+        .env("NO_COLOR", "1")
+        .args(&command_args)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|error| {
+            operation_error(
+                "reload.summarize_tools.omp.spawn",
+                format!("failed to start external command `{command_line}`"),
+                Box::new(error),
+            )
+        })?;
+    let output = wait_for_child_output(
+        &mut child,
+        "reload.summarize_tools.omp",
+        "reload.summarize_tools.omp.wait",
+        "reload.summarize_tools.omp.timeout",
+        "omp",
+        &command_line,
+    )
+    .await?;
+
+    if !output.status.success() {
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        print_external_command_failure_with_output(
+            "reload.summarize_tools.omp",
+            "omp",
+            &command_line,
+            &output.status.to_string(),
+            &[("stdout", stdout.as_ref()), ("stderr", stderr.as_ref())],
+        );
+        cleanup_summary_paths(None, Some(&workdir));
+        return Err(message_error(
+            "reload.summarize_tools.omp.exit_status",
+            format!(
+                "`omp launch` exited unsuccessfully while summarizing tools; status={}",
+                output.status
+            ),
+        ));
+    }
+
+    let summary = non_empty_summary(
+        Some(String::from_utf8_lossy(&output.stdout).as_ref()),
+        "Oh My Pi returned an empty summary",
+    );
+    cleanup_summary_paths(None, Some(&workdir));
+    summary
+}
+
 fn cleanup_summary_paths(output_path: Option<&PathBuf>, workdir: Option<&PathBuf>) {
     if let Some(output_path) = output_path {
         let _ = fs::remove_file(output_path);
@@ -562,6 +641,14 @@ pub(crate) fn copilot_workdir_path() -> Result<PathBuf, Box<dyn Error>> {
 pub(crate) fn crush_workdir_path() -> Result<PathBuf, Box<dyn Error>> {
     Ok(env::temp_dir().join(format!(
         "mcp-smart-proxy-crush-workdir-{}-{}",
+        std::process::id(),
+        unix_epoch_ms()?
+    )))
+}
+
+pub(crate) fn omp_workdir_path() -> Result<PathBuf, Box<dyn Error>> {
+    Ok(env::temp_dir().join(format!(
+        "mcp-smart-proxy-omp-workdir-{}-{}",
         std::process::id(),
         unix_epoch_ms()?
     )))

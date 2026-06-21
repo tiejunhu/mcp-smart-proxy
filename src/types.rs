@@ -102,12 +102,16 @@ pub struct CopilotRuntimeConfig {
 pub struct CrushRuntimeConfig;
 
 #[derive(Debug, Clone)]
+pub struct OmpRuntimeConfig;
+
+#[derive(Debug, Clone)]
 pub enum ModelProviderConfig {
     Codex(CodexRuntimeConfig),
     Opencode(OpencodeRuntimeConfig),
     Claude(ClaudeRuntimeConfig),
     Copilot(CopilotRuntimeConfig),
     Crush(CrushRuntimeConfig),
+    Omp(OmpRuntimeConfig),
 }
 
 impl ModelProviderConfig {
@@ -118,6 +122,7 @@ impl ModelProviderConfig {
             Self::Claude(_) => "claude",
             Self::Copilot(_) => "copilot",
             Self::Crush(_) => "crush",
+            Self::Omp(_) => "omp",
         }
     }
 }

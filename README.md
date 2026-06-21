@@ -11,14 +11,14 @@ The installed binary name is `msp`. Running `msp` without arguments shows the to
 - Reduce the number of tools your agent sees (reduce the token cost without losing any tool).
 - Cache downstream MCP tool metadata and summaries.
 - Proxy both local stdio MCP servers and remote Streamable HTTP MCP servers.
-- Reuse your existing Codex, OpenCode, Claude Code, GitHub Copilot CLI, or Crush MCP setup instead of rebuilding everything from scratch.
+- Reuse your existing Codex, OpenCode, Claude Code, GitHub Copilot CLI, Crush, or Oh My Pi (omp) MCP setup instead of rebuilding everything from scratch.
 
 ## How it works
 
 `msp` does three things:
 
 1. Connects to each configured MCP server and caches its tool metadata.
-2. Generates a short summary for each server by using a configured provider: `codex`, `opencode`, `claude`, `copilot`, or `crush`, or uses a manually configured server description.
+2. Generates a short summary for each server by using a configured provider: `codex`, `opencode`, `claude`, `copilot`, `crush`, or `omp`, or uses a manually configured server description.
 3. Starts a stdio MCP proxy that exposes these proxy tools:
   - `activate_additional_mcps`
   - `activate_tools_in_additional_mcp`
@@ -41,6 +41,7 @@ The default daemon socket lives under `~/.cache/mcp-smart-proxy/` and uses a sho
 - The `claude` CLI when using `--provider claude`
 - The `copilot` CLI when using `--provider copilot`
 - The `crush` CLI when using `--provider crush`
+- The `omp` CLI when using `--provider omp`
 - A browser session for remote MCP servers that require OAuth login
 
 ## Install
@@ -110,7 +111,7 @@ To add a remote server that needs headers up front:
 msp add --provider codex --url https://example.com/mcp --header Authorization='Bearer ${DEMO_TOKEN}' remote-demo
 ```
 
-### Fastest path for OpenCode, Claude Code, GitHub Copilot CLI, or Crush
+### Fastest path for OpenCode, Claude Code, GitHub Copilot CLI, Crush, or Oh My Pi
 
 Import existing servers:
 
@@ -119,6 +120,7 @@ msp import opencode
 msp import claude
 msp import copilot
 msp import crush
+msp import omp
 ```
 
 Install the proxy into the host:
@@ -128,6 +130,7 @@ msp install opencode
 msp install claude
 msp install copilot
 msp install crush
+msp install omp
 ```
 
 Install the bundled pi extension globally:
@@ -143,6 +146,7 @@ msp install opencode --replace
 msp install claude --replace
 msp install copilot --replace
 msp install crush --replace
+msp install omp --replace
 ```
 
 Restore the original host config later if needed:
@@ -152,6 +156,7 @@ msp restore opencode
 msp restore claude
 msp restore copilot
 msp restore crush
+msp restore omp
 ```
 
 Remove the global pi extension later if needed:
@@ -381,7 +386,7 @@ Concurrent daemon refresh requests for the same provider are coalesced into one 
 
 ## Install Into a Host
 
-Install the proxy into Codex, OpenCode, Claude Code, GitHub Copilot CLI, or Crush:
+Install the proxy into Codex, OpenCode, Claude Code, GitHub Copilot CLI, Crush, or Oh My Pi:
 
 ```bash
 msp install codex
@@ -389,6 +394,7 @@ msp install opencode
 msp install claude
 msp install copilot
 msp install crush
+msp install omp
 ```
 
 Install the bundled global pi extension:
@@ -407,6 +413,7 @@ msp install opencode --replace
 msp install claude --replace
 msp install copilot --replace
 msp install crush --replace
+msp install omp --replace
 ```
 
 Backup files:
@@ -416,6 +423,7 @@ Backup files:
 - Claude Code: `~/.claude.msp-backup.json`
 - Copilot CLI: `$COPILOT_HOME/mcp-config.msp-backup.json` or `~/.copilot/mcp-config.msp-backup.json`
 - Crush: `$CRUSH_GLOBAL_CONFIG.msp-backup.json` or `~/.config/crush/crush.msp-backup.json`
+- Oh My Pi: `$PI_CODING_AGENT_DIR/mcp.msp-backup.json` or `~/.omp/agent/mcp.msp-backup.json`
 
 Restore host config from backup:
 
@@ -425,6 +433,7 @@ msp restore opencode
 msp restore claude
 msp restore copilot
 msp restore crush
+msp restore omp
 ```
 
 Remove the bundled global pi extension:
@@ -442,6 +451,7 @@ msp restore pi
 - Claude Code: `msp import claude`
 - Copilot CLI: `msp import copilot`
 - Crush: `msp import crush`
+- Oh My Pi: `msp import omp`
 
 Provider selection works like this:
 
@@ -450,6 +460,7 @@ Provider selection works like this:
 - `import claude` defaults to provider `claude`
 - `import copilot` defaults to provider `copilot`
 - `import crush` defaults to provider `crush`
+- `import omp` defaults to provider `omp`
 - `--provider ...` overrides the default summary provider
 
 Examples:

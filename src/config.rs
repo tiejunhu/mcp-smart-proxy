@@ -18,14 +18,17 @@ const DEFAULT_OPENCODE_CONFIG_PATH: &str = "~/.config/opencode/opencode.json";
 const DEFAULT_CLAUDE_CONFIG_PATH: &str = "~/.claude.json";
 const DEFAULT_COPILOT_CONFIG_PATH: &str = "~/.copilot/mcp-config.json";
 const DEFAULT_CRUSH_CONFIG_PATH: &str = "~/.config/crush/crush.json";
+const DEFAULT_OMP_CONFIG_PATH: &str = "~/.omp/agent/mcp.json";
 const CODEX_HOME_ENV: &str = "CODEX_HOME";
 const COPILOT_HOME_ENV: &str = "COPILOT_HOME";
 const CRUSH_CONFIG_ENV: &str = "CRUSH_GLOBAL_CONFIG";
+const OMP_CONFIG_ENV: &str = "PI_CODING_AGENT_DIR";
 const CODEX_PROVIDER_NAME: &str = "codex";
 const OPENCODE_PROVIDER_NAME: &str = "opencode";
 const CLAUDE_PROVIDER_NAME: &str = "claude";
 const COPILOT_PROVIDER_NAME: &str = "copilot";
 const CRUSH_PROVIDER_NAME: &str = "crush";
+const OMP_PROVIDER_NAME: &str = "omp";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct StdioServer {
@@ -212,12 +215,13 @@ pub struct RestoreMcpServersResult {
 
 pub use import_export::{
     install_claude_mcp_server, install_codex_mcp_server, install_copilot_mcp_server,
-    install_crush_mcp_server, install_opencode_mcp_server, load_claude_servers_for_import,
-    load_codex_servers_for_import, load_copilot_servers_for_import, load_crush_servers_for_import,
-    load_opencode_servers_for_import, replace_claude_mcp_servers, replace_codex_mcp_servers,
-    replace_copilot_mcp_servers, replace_crush_mcp_servers, replace_opencode_mcp_servers,
+    install_crush_mcp_server, install_omp_mcp_server, install_opencode_mcp_server,
+    load_claude_servers_for_import, load_codex_servers_for_import, load_copilot_servers_for_import,
+    load_crush_servers_for_import, load_omp_servers_for_import, load_opencode_servers_for_import,
+    replace_claude_mcp_servers, replace_codex_mcp_servers, replace_copilot_mcp_servers,
+    replace_crush_mcp_servers, replace_omp_mcp_servers, replace_opencode_mcp_servers,
     restore_claude_mcp_servers, restore_codex_mcp_servers, restore_copilot_mcp_servers,
-    restore_crush_mcp_servers, restore_opencode_mcp_servers,
+    restore_crush_mcp_servers, restore_omp_mcp_servers, restore_opencode_mcp_servers,
 };
 pub use local::{
     add_server_with_config, configured_server, contains_server_name, import_server, list_servers,
@@ -231,16 +235,20 @@ pub(crate) use import_export::{
     collect_remote_header_value_env_vars, load_claude_config,
     load_claude_servers_for_import_from_path, load_codex_servers_for_import_from_path,
     load_copilot_config, load_copilot_servers_for_import_from_path, load_crush_config,
-    load_crush_servers_for_import_from_path, load_opencode_config,
+    load_crush_servers_for_import_from_path, load_omp_config,
+    load_omp_servers_for_import_from_path, load_opencode_config,
     load_opencode_servers_for_import_from_path, replace_claude_mcp_servers_from_path,
     replace_codex_mcp_servers_from_path, replace_copilot_mcp_servers_from_path,
-    replace_crush_mcp_servers_from_path, replace_opencode_mcp_servers_from_path,
-    restore_claude_mcp_servers_from_path, restore_codex_mcp_servers_from_path,
-    restore_copilot_mcp_servers_from_path, restore_crush_mcp_servers_from_path,
+    replace_crush_mcp_servers_from_path, replace_omp_mcp_servers_from_path,
+    replace_opencode_mcp_servers_from_path, restore_claude_mcp_servers_from_path,
+    restore_codex_mcp_servers_from_path, restore_copilot_mcp_servers_from_path,
+    restore_crush_mcp_servers_from_path, restore_omp_mcp_servers_from_path,
     restore_opencode_mcp_servers_from_path,
 };
 #[cfg(test)]
-pub(crate) use provider::{codex_config_path, copilot_config_path, crush_config_path};
+pub(crate) use provider::{
+    codex_config_path, copilot_config_path, crush_config_path, omp_config_path,
+};
 
 #[cfg(test)]
 mod tests;

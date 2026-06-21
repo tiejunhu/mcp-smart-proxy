@@ -5,15 +5,16 @@ use std::path::{Path, PathBuf};
 use crate::paths::expand_tilde;
 use crate::types::{
     ClaudeRuntimeConfig, CodexRuntimeConfig, CopilotRuntimeConfig, CrushRuntimeConfig,
-    ModelProviderConfig, OpencodeRuntimeConfig,
+    ModelProviderConfig, OmpRuntimeConfig, OpencodeRuntimeConfig,
 };
 
 use super::{
     CLAUDE_PROVIDER_NAME, CODEX_HOME_ENV, CODEX_PROVIDER_NAME, COPILOT_HOME_ENV,
     COPILOT_PROVIDER_NAME, CRUSH_CONFIG_ENV, CRUSH_PROVIDER_NAME, DEFAULT_CLAUDE_CONFIG_PATH,
     DEFAULT_CLAUDE_MODEL, DEFAULT_CODEX_CONFIG_PATH, DEFAULT_COPILOT_CONFIG_PATH,
-    DEFAULT_COPILOT_MODEL, DEFAULT_CRUSH_CONFIG_PATH, DEFAULT_MODEL, DEFAULT_OPENCODE_CONFIG_PATH,
-    DEFAULT_OPENCODE_MODEL, OPENCODE_PROVIDER_NAME,
+    DEFAULT_COPILOT_MODEL, DEFAULT_CRUSH_CONFIG_PATH, DEFAULT_MODEL, DEFAULT_OMP_CONFIG_PATH,
+    DEFAULT_OPENCODE_CONFIG_PATH, DEFAULT_OPENCODE_MODEL, OMP_CONFIG_ENV, OMP_PROVIDER_NAME,
+    OPENCODE_PROVIDER_NAME,
 };
 
 pub fn load_codex_runtime_config() -> CodexRuntimeConfig {
@@ -44,6 +45,10 @@ pub fn load_crush_runtime_config() -> CrushRuntimeConfig {
     CrushRuntimeConfig
 }
 
+pub fn load_omp_runtime_config() -> OmpRuntimeConfig {
+    OmpRuntimeConfig
+}
+
 pub fn load_model_provider_config(provider: &str) -> Result<ModelProviderConfig, Box<dyn Error>> {
     match provider {
         CODEX_PROVIDER_NAME => Ok(ModelProviderConfig::Codex(load_codex_runtime_config())),
@@ -51,8 +56,9 @@ pub fn load_model_provider_config(provider: &str) -> Result<ModelProviderConfig,
         CLAUDE_PROVIDER_NAME => Ok(ModelProviderConfig::Claude(load_claude_runtime_config())),
         COPILOT_PROVIDER_NAME => Ok(ModelProviderConfig::Copilot(load_copilot_runtime_config())),
         CRUSH_PROVIDER_NAME => Ok(ModelProviderConfig::Crush(load_crush_runtime_config())),
+        OMP_PROVIDER_NAME => Ok(ModelProviderConfig::Omp(load_omp_runtime_config())),
         _ => Err(format!(
-            "unsupported provider `{provider}`; supported providers are `codex`, `opencode`, `claude`, `copilot`, and `crush`"
+            "unsupported provider `{provider}`; supported providers are `codex`, `opencode`, `claude`, `copilot`, `crush`, and `omp`"
         )
         .into()),
     }
@@ -88,4 +94,12 @@ pub(crate) fn crush_config_path() -> Result<PathBuf, Box<dyn Error>> {
     }
 
     expand_tilde(Path::new(DEFAULT_CRUSH_CONFIG_PATH))
+}
+
+pub(crate) fn omp_config_path() -> Result<PathBuf, Box<dyn Error>> {
+    if let Some(agent_dir) = env::var_os(OMP_CONFIG_ENV).filter(|value| !value.is_empty()) {
+        return Ok(PathBuf::from(agent_dir).join("mcp.json"));
+    }
+
+    expand_tilde(Path::new(DEFAULT_OMP_CONFIG_PATH))
 }

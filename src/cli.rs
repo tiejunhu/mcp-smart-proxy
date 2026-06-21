@@ -160,6 +160,7 @@ pub enum ImportSource {
     Claude,
     Copilot,
     Crush,
+    Omp,
 }
 
 #[derive(Debug, Clone, ValueEnum)]
@@ -169,6 +170,7 @@ pub enum InstallTarget {
     Claude,
     Copilot,
     Crush,
+    Omp,
     Pi,
 }
 
@@ -179,6 +181,7 @@ pub enum ProviderName {
     Claude,
     Copilot,
     Crush,
+    Omp,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
@@ -204,6 +207,7 @@ impl ProviderName {
             Self::Claude => "claude",
             Self::Copilot => "copilot",
             Self::Crush => "crush",
+            Self::Omp => "omp",
         }
     }
 }
@@ -517,6 +521,44 @@ mod tests {
         match cli.command {
             Some(Command::Restore { target }) => {
                 assert!(matches!(target, InstallTarget::Copilot));
+            }
+            other => panic!("expected restore command, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_import_omp_source() {
+        let cli = Cli::parse_from(["msp", "import", "omp"]);
+
+        match cli.command {
+            Some(Command::Import { provider, source }) => {
+                assert!(provider.is_none());
+                assert!(matches!(source, ImportSource::Omp));
+            }
+            other => panic!("expected import command, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_install_omp_target() {
+        let cli = Cli::parse_from(["msp", "install", "omp"]);
+
+        match cli.command {
+            Some(Command::Install { replace, target }) => {
+                assert!(!replace);
+                assert!(matches!(target, InstallTarget::Omp));
+            }
+            other => panic!("expected install command, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_restore_omp_target() {
+        let cli = Cli::parse_from(["msp", "restore", "omp"]);
+
+        match cli.command {
+            Some(Command::Restore { target }) => {
+                assert!(matches!(target, InstallTarget::Omp));
             }
             other => panic!("expected restore command, got {other:?}"),
         }
