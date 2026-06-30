@@ -204,7 +204,7 @@ fn activate_tool_returns_only_tools() {
     assert_eq!(result.content.len(), 1);
     assert_eq!(
         result.content[0].as_text().unwrap().text,
-        "[alpha]\nsearch: Search things"
+        "[alpha]\nsearch: Search things\n\nNow call activate_tools_in_additional_mcp to activate the tools before calling it."
     );
 }
 
@@ -227,7 +227,7 @@ fn activate_tool_truncates_tool_description_to_80_characters_with_ellipsis() {
     assert_eq!(result.content.len(), 1);
     assert_eq!(
         result.content[0].as_text().unwrap().text,
-        "[alpha]\nsearch: 12345678901234567890123456789012345678901234567890123456789012345678901234567..."
+        "[alpha]\nsearch: 12345678901234567890123456789012345678901234567890123456789012345678901234567...\n\nNow call activate_tools_in_additional_mcp to activate the tools before calling it."
     );
 }
 
@@ -239,7 +239,10 @@ fn activate_tool_returns_name_only_when_description_is_missing() {
 
     assert_eq!(result.structured_content, None);
     assert_eq!(result.content.len(), 1);
-    assert_eq!(result.content[0].as_text().unwrap().text, "[alpha]\nsearch");
+    assert_eq!(
+        result.content[0].as_text().unwrap().text,
+        "[alpha]\nsearch\n\nNow call activate_tools_in_additional_mcp to activate the tools before calling it."
+    );
 }
 
 #[test]
@@ -261,7 +264,7 @@ fn activate_tool_returns_multiple_toolsets_in_request_order() {
     assert_eq!(result.content.len(), 1);
     assert_eq!(
         result.content[0].as_text().unwrap().text,
-        "[beta]\nlist: List things\n\n[alpha]\nsearch: Search things"
+        "[beta]\nlist: List things\n\n[alpha]\nsearch: Search things\n\nNow call activate_tools_in_additional_mcp to activate the tools before calling it."
     );
 }
 

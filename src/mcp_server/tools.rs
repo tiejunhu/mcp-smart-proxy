@@ -174,7 +174,7 @@ pub(super) fn parse_tool_request<T: DeserializeOwned>(
 }
 
 pub(super) fn build_activate_tool_result(toolsets: &[&CachedToolsetRecord]) -> CallToolResult {
-    let content = toolsets
+    let toolset_section = toolsets
         .iter()
         .map(|toolset| {
             let mut lines = vec![format!("[{}]", toolset.name)];
@@ -183,6 +183,9 @@ pub(super) fn build_activate_tool_result(toolsets: &[&CachedToolsetRecord]) -> C
         })
         .collect::<Vec<_>>()
         .join("\n\n");
+    let content = format!(
+        "{toolset_section}\n\nNow call activate_tools_in_additional_mcp to activate the tools before calling it."
+    );
     CallToolResult::success(vec![Content::text(content)])
 }
 
