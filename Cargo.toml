@@ -23,7 +23,7 @@ reqwest = { version = "0.13.2", default-features = false, features = ["json", "r
 rmcp = { version = "1.3.0", features = ["auth", "client", "server", "transport-child-process", "transport-io", "transport-streamable-http-client", "transport-streamable-http-client-reqwest"] }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.149"
-tar = "0.4.44"
+tar = "0.4.46"
 tokio = { version = "1.50.0", features = ["fs", "io-util", "macros", "net", "process", "rt-multi-thread", "signal", "sync", "time"] }
 toon-format = "0.4.5"
 toml = "1.1.0"
