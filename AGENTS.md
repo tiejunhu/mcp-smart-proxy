@@ -41,7 +41,6 @@
 - Keep self-update logic split by concern: version comparison, state-file persistence, binary installation, and runtime orchestration should not live in a single Rust module.
 - Keep local config record construction centralized: adding or importing a server should go through shared draft builders instead of duplicating transport-to-table conversion logic.
 - Keep MCP proxy logic split between cache loading, tool-schema helpers, downstream client lifecycle, and request dispatch so `src/mcp_server/` remains easy to extend without re-reading one large file.
-- Keep Lua eval support isolated in `src/mcp_server/lua_eval.rs`: run scripts through `mlua` with a safe standalone runtime, keep JSON/Lua conversion boundaries explicit, and route `call_mcp_tool` back through daemon `call_tool` instead of opening direct downstream clients.
 - Keep the proxy MCP tool naming user-facing and stable around `additional_mcp`: use `activate_additional_mcps` for server inventory, `activate_tools_in_additional_mcp` for tool detail lookup, and `call_tool_in_additional_mcp` for downstream invocation.
 - Keep MCP tool annotation ownership explicit: built-in proxy tools should declare their own hints in `src/mcp_server/tools.rs`, while downstream cached tool annotations should be preserved as provided instead of being rewritten in `src/types.rs`.
 - Keep GitHub release publication in CI on the `gh` CLI path instead of Node-based third-party release actions, so release jobs stay aligned with GitHub-hosted tooling and avoid deprecated Node runtime churn.

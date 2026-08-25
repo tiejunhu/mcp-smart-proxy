@@ -8,12 +8,9 @@ use serde_json::{Map as JsonMap, Value as JsonValue, json};
 use crate::paths::sanitize_name;
 use crate::types::{CachedToolsetRecord, ToolSnapshot};
 
-use super::lua_eval::EVAL_LUA_SCRIPT_NAME;
-
 pub(super) const ACTIVATE_ADDITIONAL_MCPS_NAME: &str = "activate_additional_mcps";
 pub(super) const ACTIVATE_TOOLS_IN_ADDITIONAL_MCP_NAME: &str = "activate_tools_in_additional_mcp";
 pub(super) const CALL_TOOL_IN_ADDITIONAL_MCP_NAME: &str = "call_tool_in_additional_mcp";
-pub(super) const EVAL_LUA_SCRIPT_DESCRIPTION: &str = "Evaluate a Lua 5.5 script. The script can call any activated MCP tools through the async `call_mcp_tool(mcp_name, tool_name, args)` helper, where `args` must be a Lua table that maps to a JSON object or nil.";
 pub(super) const STDIO_HOST_REQUIRED_MESSAGE: &str = "`msp mcp` is a stdio MCP server and must be started by an MCP client such as Codex, OpenCode, Claude Code, Copilot CLI, or Crush instead of running directly in a terminal";
 
 #[derive(Debug, Deserialize)]
@@ -39,7 +36,6 @@ pub(super) struct ToolCatalog {
     activate_mcps: Tool,
     activate_tools: Tool,
     call_tool_in_additional_mcp: Tool,
-    eval_lua_script: Tool,
 }
 
 impl ToolCatalog {
@@ -50,7 +46,6 @@ impl ToolCatalog {
             call_tool_in_additional_mcp: call_tool_in_additional_mcp_definition(
                 CALL_TOOL_IN_ADDITIONAL_MCP_NAME,
             ),
-            eval_lua_script: eval_lua_script_definition(),
         }
     }
 
@@ -59,7 +54,6 @@ impl ToolCatalog {
             self.activate_mcps.clone(),
             self.activate_tools.clone(),
             self.call_tool_in_additional_mcp.clone(),
-            self.eval_lua_script.clone(),
         ]
     }
 
@@ -68,7 +62,6 @@ impl ToolCatalog {
             ACTIVATE_ADDITIONAL_MCPS_NAME => Some(self.activate_mcps.clone()),
             ACTIVATE_TOOLS_IN_ADDITIONAL_MCP_NAME => Some(self.activate_tools.clone()),
             CALL_TOOL_IN_ADDITIONAL_MCP_NAME => Some(self.call_tool_in_additional_mcp.clone()),
-            EVAL_LUA_SCRIPT_NAME => Some(self.eval_lua_script.clone()),
             _ => None,
         }
     }
@@ -120,29 +113,6 @@ pub(super) fn call_tool_in_additional_mcp_definition(name: &'static str) -> Tool
                 }
             },
             "required": ["external_mcp_name", "tool_name", "args_in_json"],
-            "additionalProperties": false
-        })),
-    )
-    .with_annotations(proxy_tool_annotations(false))
-}
-
-pub(super) fn eval_lua_script_definition() -> Tool {
-    Tool::new(
-        EVAL_LUA_SCRIPT_NAME,
-        EVAL_LUA_SCRIPT_DESCRIPTION,
-        object(json!({
-            "type": "object",
-            "properties": {
-                "script": {
-                    "type": "string",
-                    "description": "The Lua 5.5 source code to execute. Return a value to produce structured output."
-                },
-                "globals": {
-                    "type": "object",
-                    "description": "Optional JSON object whose top-level keys are injected into the Lua global environment before execution."
-                }
-            },
-            "required": ["script"],
             "additionalProperties": false
         })),
     )

@@ -22,12 +22,9 @@ The installed binary name is `msp`. Running `msp` without arguments shows the to
 3. Starts a stdio MCP proxy that exposes these proxy tools:
   - `activate_additional_mcps`
   - `activate_tools_in_additional_mcp`
-   - `call_tool_in_additional_mcp`
-  - `eval_lua_script`
+  - `call_tool_in_additional_mcp`
 
 Agents first inspect the cached server index, optionally inspect one tool definition, and then call the downstream tool through the proxy.
-
-The built-in `eval_lua_script` tool runs Lua 5.5 scripts inside the proxy through `mlua`. Scripts can call any configured downstream MCP tool through `call_mcp_tool(mcp_name, tool_name, args)`, where `args` is a Lua table that maps to a JSON object.
 
 When a host starts `msp mcp`, `msp` auto-starts one background daemon for that config file. That daemon owns downstream MCP communication and periodic self-update checks. Later `msp mcp` processes that use the same config reuse the same Unix socket daemon, even when they pass different `--provider` values. The daemon exits after 1 hour with no requests.
 
@@ -279,26 +276,6 @@ msp reload --provider codex
 ```
 
 `reload` fetches the downstream tool list, compares it to the cache, and only regenerates the summary when the tool list changed. If you omit `--provider`, `reload` still updates tools and keeps the existing cached summary unless the server has a manual `description` in config.
-
-### Run Lua automation through the proxy
-
-The built-in `eval_lua_script` MCP tool is useful when the host wants lightweight programmable orchestration without exposing every downstream tool directly in the prompt.
-
-Example Lua script:
-
-```lua
-local docs = call_mcp_tool("context7", "query-docs", {
-  libraryId = "/websites/rs_crate_mlua",
-  query = "create_async_function examples",
-})
-
-return {
-  isError = docs.isError,
-  structured = docs.structuredContent,
-}
-```
-
-`eval_lua_script` returns structured JSON. A script that returns no values produces `null`, one value produces that value, and multiple return values are encoded as a JSON array.
 
 ### Log in or out of a remote server
 

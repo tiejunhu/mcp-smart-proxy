@@ -1,5 +1,4 @@
 pub(crate) mod cache;
-mod lua_eval;
 mod server;
 #[cfg(test)]
 mod tests;

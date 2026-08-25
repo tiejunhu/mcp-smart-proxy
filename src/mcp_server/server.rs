@@ -15,7 +15,6 @@ use crate::daemon;
 use crate::toon::rewrite_call_tool_result_to_toon;
 use crate::types::CachedToolsetRecord;
 
-use super::lua_eval::{EVAL_LUA_SCRIPT_NAME, EvalLuaScriptRequest, execute_eval_lua_script};
 use super::tools::{
     ACTIVATE_ADDITIONAL_MCPS_NAME, ACTIVATE_TOOLS_IN_ADDITIONAL_MCP_NAME,
     ActivateAdditionalMcpsRequest, ActivateToolsInAdditionalMcpRequest,
@@ -88,14 +87,6 @@ impl SmartProxyMcpServer {
             .await
     }
 
-    async fn call_eval_lua_script(
-        &self,
-        arguments: JsonMap<String, JsonValue>,
-    ) -> Result<CallToolResult, McpError> {
-        let params: EvalLuaScriptRequest = parse_tool_request(EVAL_LUA_SCRIPT_NAME, arguments)?;
-        Ok(execute_eval_lua_script(&self.config_path, params).await)
-    }
-
     async fn call_downstream_tool(
         &self,
         toolset: &CachedToolsetRecord,
@@ -160,7 +151,6 @@ impl ServerHandler for SmartProxyMcpServer {
                 self.call_activate_tool_detail(arguments).await
             }
             CALL_TOOL_IN_ADDITIONAL_MCP_NAME => self.call_external_tool(arguments).await,
-            EVAL_LUA_SCRIPT_NAME => self.call_eval_lua_script(arguments).await,
             _ => Err(McpError::method_not_found::<CallToolRequestMethod>()),
         }
     }
