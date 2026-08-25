@@ -608,7 +608,7 @@ Input:
 
 ```json
 {
-  "external_mcp_names": ["github", "filesystem"]
+  "additional_mcp_names": ["github", "filesystem"]
 }
 ```
 
@@ -631,7 +631,7 @@ Input:
 
 ```json
 {
-  "external_mcp_name": "github",
+  "additional_mcp_name": "github",
   "tool_names": ["example_tool", "another_tool"]
 }
 ```
@@ -663,13 +663,13 @@ Input:
 
 ```json
 {
-  "external_mcp_name": "github",
+  "additional_mcp_name": "github",
   "tool_name": "example_tool",
   "args_in_json": "{\"owner\":\"octo-org\",\"repo\":\"demo\"}"
 }
 ```
 
-`args_in_json` must decode to a JSON object or `null`.
+`args_in_json` must decode to a JSON object, `null`, or an empty string.
 
 ## Limitations
 

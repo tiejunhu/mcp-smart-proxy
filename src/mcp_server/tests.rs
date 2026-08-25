@@ -203,7 +203,7 @@ fn activate_tool_returns_only_tools() {
     assert_eq!(result.content.len(), 1);
     assert_eq!(
         result.content[0].as_text().unwrap().text,
-        "[alpha]\nsearch: Search things\n\nNow call activate_tools_in_additional_mcp to activate the tools before calling it."
+        "[alpha]\nsearch: Search things\n\nNext, call activate_tools_in_additional_mcp to activate and get parameter schemas for the tools you need before calling them."
     );
 }
 
@@ -226,7 +226,7 @@ fn activate_tool_truncates_tool_description_to_80_characters_with_ellipsis() {
     assert_eq!(result.content.len(), 1);
     assert_eq!(
         result.content[0].as_text().unwrap().text,
-        "[alpha]\nsearch: 12345678901234567890123456789012345678901234567890123456789012345678901234567...\n\nNow call activate_tools_in_additional_mcp to activate the tools before calling it."
+        "[alpha]\nsearch: 12345678901234567890123456789012345678901234567890123456789012345678901234567...\n\nNext, call activate_tools_in_additional_mcp to activate and get parameter schemas for the tools you need before calling them."
     );
 }
 
@@ -240,7 +240,7 @@ fn activate_tool_returns_name_only_when_description_is_missing() {
     assert_eq!(result.content.len(), 1);
     assert_eq!(
         result.content[0].as_text().unwrap().text,
-        "[alpha]\nsearch\n\nNow call activate_tools_in_additional_mcp to activate the tools before calling it."
+        "[alpha]\nsearch\n\nNext, call activate_tools_in_additional_mcp to activate and get parameter schemas for the tools you need before calling them."
     );
 }
 
@@ -263,7 +263,7 @@ fn activate_tool_returns_multiple_toolsets_in_request_order() {
     assert_eq!(result.content.len(), 1);
     assert_eq!(
         result.content[0].as_text().unwrap().text,
-        "[beta]\nlist: List things\n\n[alpha]\nsearch: Search things\n\nNow call activate_tools_in_additional_mcp to activate the tools before calling it."
+        "[beta]\nlist: List things\n\n[alpha]\nsearch: Search things\n\nNext, call activate_tools_in_additional_mcp to activate and get parameter schemas for the tools you need before calling them."
     );
 }
 
@@ -327,6 +327,15 @@ fn parses_null_arguments_json() {
 }
 
 #[test]
+fn parses_empty_arguments_json() {
+    let parsed = parse_tool_arguments_json("").unwrap();
+    assert_eq!(parsed, None);
+
+    let parsed_whitespace = parse_tool_arguments_json("   ").unwrap();
+    assert_eq!(parsed_whitespace, None);
+}
+
+#[test]
 fn rejects_non_object_arguments_json() {
     let error = parse_tool_arguments_json(r#"["hello"]"#).unwrap_err();
 
@@ -345,7 +354,7 @@ fn call_tool_definition_contains_expected_fields() {
         .and_then(JsonValue::as_object)
         .unwrap();
 
-    assert!(properties.contains_key("external_mcp_name"));
+    assert!(properties.contains_key("additional_mcp_name"));
     assert!(properties.contains_key("tool_name"));
     assert!(properties.contains_key("args_in_json"));
 }
@@ -365,8 +374,8 @@ fn activate_additional_mcps_definition_contains_expected_fields() {
         .and_then(JsonValue::as_array)
         .unwrap();
 
-    assert!(properties.contains_key("external_mcp_names"));
-    assert_eq!(required, &vec![json!("external_mcp_names")]);
+    assert!(properties.contains_key("additional_mcp_names"));
+    assert_eq!(required, &vec![json!("additional_mcp_names")]);
 }
 
 #[test]
@@ -384,11 +393,11 @@ fn activate_tools_in_additional_mcp_definition_contains_expected_fields() {
         .and_then(JsonValue::as_array)
         .unwrap();
 
-    assert!(properties.contains_key("external_mcp_name"));
+    assert!(properties.contains_key("additional_mcp_name"));
     assert!(properties.contains_key("tool_names"));
     assert_eq!(
         required,
-        &vec![json!("external_mcp_name"), json!("tool_names")]
+        &vec![json!("additional_mcp_name"), json!("tool_names")]
     );
 }
 

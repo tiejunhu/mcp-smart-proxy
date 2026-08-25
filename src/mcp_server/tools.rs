@@ -15,18 +15,18 @@ pub(super) const STDIO_HOST_REQUIRED_MESSAGE: &str = "`msp mcp` is a stdio MCP s
 
 #[derive(Debug, Deserialize)]
 pub(super) struct ActivateAdditionalMcpsRequest {
-    pub(super) external_mcp_names: Vec<String>,
+    pub(super) additional_mcp_names: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
 pub(super) struct ActivateToolsInAdditionalMcpRequest {
-    pub(super) external_mcp_name: String,
+    pub(super) additional_mcp_name: String,
     pub(super) tool_names: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
 pub(super) struct CallToolInAdditionalMcpRequest {
-    pub(super) external_mcp_name: String,
+    pub(super) additional_mcp_name: String,
     pub(super) tool_name: String,
     pub(super) args_in_json: String,
 }
@@ -95,24 +95,24 @@ pub(super) fn build_activate_tool_description(toolsets: &[CachedToolsetRecord]) 
 pub(super) fn call_tool_in_additional_mcp_definition(name: &'static str) -> Tool {
     Tool::new(
         name,
-        "Call a specific tool exposed by an additional MCP server",
+        "Execute an activated tool on an additional MCP server. Ensure you have activated the tool with activate_tools_in_additional_mcp first to obtain its exact parameter schema.",
         object(json!({
             "type": "object",
             "properties": {
-                "external_mcp_name": {
+                "additional_mcp_name": {
                     "type": "string",
-                    "description": "The external MCP server name."
+                    "description": "The additional MCP server name."
                 },
                 "tool_name": {
                     "type": "string",
-                    "description": "The tool name exposed by that external MCP server."
+                    "description": "The tool name exposed by that additional MCP server."
                 },
                 "args_in_json": {
                     "type": "string",
-                    "description": "A JSON object string containing the external MCP tool arguments, follow the JSON schema, for example {}."
+                    "description": "A JSON object string containing the tool arguments matching the schema obtained from activate_tools_in_additional_mcp. Pass \"{}\" if no arguments are required."
                 }
             },
-            "required": ["external_mcp_name", "tool_name", "args_in_json"],
+            "required": ["additional_mcp_name", "tool_name", "args_in_json"],
             "additionalProperties": false
         })),
     )
@@ -154,7 +154,7 @@ pub(super) fn build_activate_tool_result(toolsets: &[&CachedToolsetRecord]) -> C
         .collect::<Vec<_>>()
         .join("\n\n");
     let content = format!(
-        "{toolset_section}\n\nNow call activate_tools_in_additional_mcp to activate the tools before calling it."
+        "{toolset_section}\n\nNext, call activate_tools_in_additional_mcp to activate and get parameter schemas for the tools you need before calling them."
     );
     CallToolResult::success(vec![Content::text(content)])
 }
@@ -168,7 +168,11 @@ pub(super) fn build_activate_tool_detail_result(tools: &[&ToolSnapshot]) -> Call
 pub(super) fn parse_tool_arguments_json(
     args_in_json: &str,
 ) -> Result<Option<JsonMap<String, JsonValue>>, McpError> {
-    let parsed = serde_json::from_str::<JsonValue>(args_in_json).map_err(|error| {
+    let trimmed = args_in_json.trim();
+    if trimmed.is_empty() {
+        return Ok(None);
+    }
+    let parsed = serde_json::from_str::<JsonValue>(trimmed).map_err(|error| {
         McpError::invalid_params(
             format!("`args_in_json` must be valid JSON: {error}"),
             Some(json!({ "args_in_json": args_in_json })),
@@ -191,9 +195,9 @@ pub(super) fn resolve_toolset_or_error<'a>(
 ) -> Result<&'a CachedToolsetRecord, McpError> {
     resolve_toolset_name(toolsets, requested_name).ok_or_else(|| {
         McpError::invalid_params(
-            format!("unknown external MCP server `{requested_name}`"),
+            format!("unknown additional MCP server `{requested_name}`"),
             Some(json!({
-                "available_external_mcps": available_toolset_names(toolsets)
+                "available_additional_mcps": available_toolset_names(toolsets)
             })),
         )
     })
@@ -206,7 +210,7 @@ pub(super) fn resolve_tool_snapshot_or_error<'a>(
     resolve_tool_snapshot(toolset, tool_name).ok_or_else(|| {
         McpError::invalid_params(
             format!(
-                "unknown tool `{tool_name}` in external MCP server `{}`",
+                "unknown tool `{tool_name}` in additional MCP server `{}`",
                 toolset.name
             ),
             Some(json!({
@@ -223,7 +227,7 @@ fn activate_additional_mcps_definition(toolsets: &[CachedToolsetRecord]) -> Tool
         object(json!({
             "type": "object",
             "properties": {
-                "external_mcp_names": {
+                "additional_mcp_names": {
                     "type": "array",
                     "description": "The MCP server names to activate.",
                     "items": {
@@ -232,7 +236,7 @@ fn activate_additional_mcps_definition(toolsets: &[CachedToolsetRecord]) -> Tool
                     "minItems": 1
                 }
             },
-            "required": ["external_mcp_names"],
+            "required": ["additional_mcp_names"],
             "additionalProperties": false
         })),
     )
@@ -242,24 +246,24 @@ fn activate_additional_mcps_definition(toolsets: &[CachedToolsetRecord]) -> Tool
 fn activate_tools_in_additional_mcp_definition() -> Tool {
     Tool::new(
         ACTIVATE_TOOLS_IN_ADDITIONAL_MCP_NAME,
-        "Return the full definitions of one or more tools exposed by an additional MCP server, use this tool before calling call_tool_in_additional_mcp",
+        "Activate and fetch full definitions (schemas and parameters) of one or more tools from an MCP server. Always activate tools with this function before calling them via call_tool_in_additional_mcp.",
         object(json!({
             "type": "object",
             "properties": {
-                "external_mcp_name": {
+                "additional_mcp_name": {
                     "type": "string",
-                    "description": "The external MCP server name."
+                    "description": "The additional MCP server name."
                 },
                 "tool_names": {
                     "type": "array",
-                    "description": "The tool names exposed by that external MCP server.",
+                    "description": "The tool names to activate.",
                     "items": {
                         "type": "string"
                     },
                     "minItems": 1
                 }
             },
-            "required": ["external_mcp_name", "tool_names"],
+            "required": ["additional_mcp_name", "tool_names"],
             "additionalProperties": false
         })),
     )

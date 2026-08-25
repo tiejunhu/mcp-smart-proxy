@@ -52,7 +52,7 @@ impl SmartProxyMcpServer {
         let params: ActivateAdditionalMcpsRequest =
             parse_tool_request(ACTIVATE_ADDITIONAL_MCPS_NAME, arguments)?;
         let toolsets = params
-            .external_mcp_names
+            .additional_mcp_names
             .iter()
             .map(|name| resolve_toolset_or_error(&self.toolsets, name))
             .collect::<Result<Vec<_>, _>>()?;
@@ -65,7 +65,7 @@ impl SmartProxyMcpServer {
     ) -> Result<CallToolResult, McpError> {
         let params: ActivateToolsInAdditionalMcpRequest =
             parse_tool_request(ACTIVATE_TOOLS_IN_ADDITIONAL_MCP_NAME, arguments)?;
-        let toolset = resolve_toolset_or_error(&self.toolsets, &params.external_mcp_name)?;
+        let toolset = resolve_toolset_or_error(&self.toolsets, &params.additional_mcp_name)?;
         let tools = params
             .tool_names
             .iter()
@@ -80,7 +80,7 @@ impl SmartProxyMcpServer {
     ) -> Result<CallToolResult, McpError> {
         let params: CallToolInAdditionalMcpRequest =
             parse_tool_request(CALL_TOOL_IN_ADDITIONAL_MCP_NAME, arguments)?;
-        let toolset = resolve_toolset_or_error(&self.toolsets, &params.external_mcp_name)?;
+        let toolset = resolve_toolset_or_error(&self.toolsets, &params.additional_mcp_name)?;
         let arguments = parse_tool_arguments_json(&params.args_in_json)?;
 
         self.call_downstream_tool(toolset, params.tool_name, arguments)
